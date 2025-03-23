@@ -1,8 +1,8 @@
-const express = require("express");
-const { google } = require("googleapis");
-const axios = require("axios");
-const cors = require("cors");
-const fs = require("fs");
+import express from "express";
+import { google } from "googleapis";
+import axios from "axios";
+import cors from "cors";
+import fs from "fs";
 
 const app = express();
 app.use(express.json());
