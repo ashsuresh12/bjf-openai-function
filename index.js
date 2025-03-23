@@ -1,16 +1,15 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const { Configuration, OpenAIApi } = require('openai');
+const OpenAI = require('openai');
 
 const app = express();
 const port = process.env.PORT || 8080;
 
 app.use(bodyParser.json());
 
-const configuration = new Configuration({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const openai = new OpenAIApi(configuration);
 
 app.post('/generate', async (req, res) => {
   try {
@@ -42,14 +41,14 @@ app.post('/generate', async (req, res) => {
       });
     });
 
-    const completion = await openai.createChatCompletion({
+    const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages,
       temperature: 0.7,
       max_tokens: 400 * products.length,
     });
 
-    const responses = completion.data.choices.map((choice) => choice.message.content.trim());
+    const responses = completion.choices.map((choice) => choice.message.content.trim());
     const structured = [];
 
     for (let i = 0; i < responses.length; i += 2) {
