@@ -42,10 +42,10 @@ app.post('/generate', async (req, res) => {
     });
 
     const completion = await openai.chat.completions.create({
-  model: 'gpt-4o',
+  model: 'gpt-3.5-turbo',
   messages,
   temperature: 0.7,
-  max_tokens: Math.min(400 * products.length, 6000),
+  max_tokens: Math.min(300 * products.length, 4000),
 });
 
     const responses = completion.choices.map((choice) => choice.message.content.trim());
