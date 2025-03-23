@@ -155,7 +155,7 @@ async function callOpenAI(prompt) {
       },
       {
         headers: {
-          Authorization: `Bearer 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`,
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           "Content-Type": "application/json"
         }
       }
