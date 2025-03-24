@@ -8,14 +8,11 @@ app.use(express.json());
 app.use(cors());
 
 const PORT = process.env.PORT || 8080;
-
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+
 const auth = new google.auth.GoogleAuth({
   credentials,
-  scopes: [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-  ]
+  scopes: ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 });
 
 app.get("/", (req, res) => {
@@ -31,55 +28,59 @@ app.get("/generate-batch", async (req, res) => {
     const sourceSheet = "Raw Data 22Mar";
     const outputSheet = "v2 Output";
 
-    console.log("Reading from Raw Data 22Mar...");
-    const readRange = `${sourceSheet}!B2:I21`; // Read 20 products (rows 2 to 21)
+    console.log("🔄 Reading Raw Data...");
     const response = await sheets.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId,
-      range: readRange
+      range: `${sourceSheet}!B2:I151`
     });
 
     const rows = response.data.values || [];
-    if (rows.length === 0) return res.status(400).send("No data found.");
-
-    console.log(`Processing ${rows.length} rows...`);
     const output = [];
 
-    for (const row of rows) {
-      const productTitle = row[1] || "";
+    for (let row of rows) {
+      const sku = row[0]?.trim() || "";
+      const productTitle = row[1]?.trim() || "";
       const collections = row[2] || "";
-      const websiteTitle = row[3] || productTitle;
+      const websiteTitle = row[3]?.trim() || productTitle;
       const variantsRaw = row[4] || "";
       const extraCollection = row[6] || "";
 
       if (!productTitle || !variantsRaw) continue;
 
       const variants = variantsRaw.split(",").map(v => v.trim());
-      const mergedCollections = formatTags(collections + "," + extraCollection);
+      const handle = productTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const type = inferTypeFromCollections(collections + "," + extraCollection);
+      const tags = formatTags(collections + "," + extraCollection);
+
+      const description = await generateDescription(websiteTitle);
+      await sleep(1000);
+      const seoDescription = await generateSEODescription(websiteTitle);
+      await sleep(1000);
 
       for (const variant of variants) {
-        const title = `${websiteTitle} - ${variant}`;
-        console.log("⏳ Processing:", title);
-
-        const description = await generateDescription(websiteTitle);
-        await sleep(1000);
-        const seoDescription = await generateSEODescription(websiteTitle);
-        await sleep(1000);
+        const fullTitle = `${websiteTitle} - ${variant}`;
+        const weight = normaliseWeightToKg(variant);
         const seoTitle = getSeoTitle(websiteTitle, variant);
 
         const rowOutput = Array(106).fill("");
-        rowOutput[1] = title;               // Column B
-        rowOutput[2] = description;         // Column C
-        rowOutput[5] = mergedCollections;   // Column F
-        rowOutput[64] = seoTitle;           // Column BN
-        rowOutput[65] = seoDescription;     // Column BO
+        rowOutput[0] = handle;
+        rowOutput[1] = fullTitle;
+        rowOutput[2] = description;
+        rowOutput[3] = "BJF";
+        rowOutput[4] = type;
+        rowOutput[5] = tags;
+        rowOutput[6] = sku;
+        rowOutput[7] = weight;
+        rowOutput[64] = seoTitle;
+        rowOutput[65] = seoDescription;
 
         output.push(rowOutput);
       }
     }
 
-    const startRow = 16;
-    console.log(`✅ Writing ${output.length} rows to v2 Output starting at row ${startRow}...`);
+    const startRow = 4;
+    console.log(`✅ Writing ${output.length} rows to v2 Output starting from row ${startRow}...`);
     const writeResult = await sheets.spreadsheets.values.update({
       auth: authClient,
       spreadsheetId,
@@ -89,12 +90,14 @@ app.get("/generate-batch", async (req, res) => {
     });
 
     console.log("📝 Sheets write result:", writeResult.status, writeResult.statusText);
-    res.status(200).json({ message: "✅ v2.1 batch complete", rows: output.length });
+    res.status(200).json({ message: `✅ v2.2 complete: ${output.length} rows written.` });
   } catch (err) {
     console.error("❌ ERROR:", err.message);
     res.status(500).send("Something went wrong");
   }
 });
+
+// ---------- Utilities ----------
 
 function formatTags(raw) {
   return raw
@@ -110,22 +113,41 @@ function formatTags(raw) {
     .join(", ");
 }
 
+function inferTypeFromCollections(input) {
+  const cleaned = input.toLowerCase();
+  if (cleaned.includes("nuts")) return "Nuts";
+  if (cleaned.includes("grains")) return "Grains";
+  if (cleaned.includes("seeds")) return "Seeds";
+  if (cleaned.includes("snacks")) return "Snacks";
+  return "Pantry";
+}
+
+function normaliseWeightToKg(text) {
+  const match = text.match(/(\d+(?:\.\d+)?)(g|kg|ml|l)/i);
+  if (!match) return "";
+  let [_, num, unit] = match;
+  let value = parseFloat(num);
+  unit = unit.toLowerCase();
+
+  if (unit === "g" || unit === "ml") return (value / 1000).toFixed(3).replace(/\.?0+$/, "");
+  if (unit === "kg" || unit === "l") return value.toString();
+  return "";
+}
+
 function getSeoTitle(product, variant) {
   let title = `${product} ${variant}`.replace(/\(.*?\)/g, "").trim();
   return title.length > 60 ? title.slice(0, 57) + "..." : title;
 }
 
 async function generateDescription(title) {
-  console.log("Calling OpenAI-mini for description of:", title);
+  console.log("Calling GPT-4o-mini for description of:", title);
   const prompt = `Write a concise, neutral product description in UK English for '${title}'. Avoid repeating the title at the start. Do not include any reference to product sizes like '250g' or '1L'. Keep it under 400 characters, avoid salesy tone, and ensure natural, flowing copy. No headers or bullet points.`;
-
   return await callOpenAI(prompt);
 }
 
 async function generateSEODescription(title) {
-  console.log("Calling OpenAI-mini for SEO description of:", title);
+  console.log("Calling GPT-4o-mini for SEO description of:", title);
   const prompt = `Write an SEO-friendly description in UK English under 160 characters for a food or pantry item called '${title}'. Do not mention the product title or size. Start with a natural phrase and include a real-world benefit or use.`;
-
   return await callOpenAI(prompt);
 }
 
@@ -134,7 +156,7 @@ async function callOpenAI(prompt) {
     const res = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4o-mini", // Switched from gpt-4o
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
