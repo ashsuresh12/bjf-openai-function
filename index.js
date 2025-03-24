@@ -9,7 +9,6 @@ app.use(cors());
 
 const PORT = process.env.PORT || 8080;
 
-// Load credentials securely from environment variable
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
 const auth = new google.auth.GoogleAuth({
   credentials,
@@ -40,13 +39,13 @@ app.get("/generate-batch", async (req, res) => {
       range: readRange
     });
 
-    const rows = response.data.values || [];
-    if (rows.length === 0) {
-      console.log("No data found.");
-      return res.status(400).send("No data found.");
-    }
+    let rows = response.data.values || [];
+    if (rows.length === 0) return res.status(400).send("No data found.");
 
-    console.log(`Read ${rows.length} rows.`);
+    // 🔒 LIMIT TO FIRST 5 ROWS ONLY
+    rows = rows.slice(0, 5);
+
+    console.log(`Processing ${rows.length} rows...`);
     const output = [];
 
     for (const row of rows) {
@@ -63,37 +62,37 @@ app.get("/generate-batch", async (req, res) => {
 
       for (const variant of variants) {
         const title = `${websiteTitle} - ${variant}`;
-        console.log("Processing variant:", title);
+        console.log("⏳ Processing:", title);
 
         const description = await generateDescription(websiteTitle);
+        await sleep(1000);
         const seoDescription = await generateSEODescription(websiteTitle);
+        await sleep(1000);
         const seoTitle = getSeoTitle(websiteTitle, variant);
 
         const rowOutput = Array(106).fill("");
-        rowOutput[1] = title;                  // Column B
-        rowOutput[2] = description;            // Column C
-        rowOutput[5] = mergedCollections;      // Column F
-        rowOutput[64] = seoTitle;              // Column BN
-        rowOutput[65] = seoDescription;        // Column BO
+        rowOutput[1] = title;               // Column B
+        rowOutput[2] = description;         // Column C
+        rowOutput[5] = mergedCollections;   // Column F
+        rowOutput[64] = seoTitle;           // Column BN
+        rowOutput[65] = seoDescription;     // Column BO
 
         output.push(rowOutput);
       }
     }
 
-    console.log(`Prepared ${output.length} output rows. Writing to v2 Output...`);
+    console.log("✅ Writing to sheet...");
     const startRow = 4;
-    await sheets.spreadsheets.values.update({
+    const writeResult = await sheets.spreadsheets.values.update({
       auth: authClient,
       spreadsheetId,
       range: `${outputSheet}!A${startRow}`,
       valueInputOption: "RAW",
-      resource: {
-        values: output
-      }
+      resource: { values: output }
     });
 
-    console.log("✅ Batch write complete.");
-    res.status(200).json({ message: "Batch processed", rows: output.length });
+    console.log("📝 Sheets write result:", writeResult.status, writeResult.statusText);
+    res.status(200).json({ message: "✅ Batch complete", rows: output.length });
   } catch (err) {
     console.error("❌ ERROR:", err.message);
     res.status(500).send("Something went wrong");
@@ -162,8 +161,12 @@ async function callOpenAI(prompt) {
     return res.data.choices[0].message.content.trim();
   } catch (err) {
     console.error("❌ OpenAI error:", err.message);
-    return "Error: Unable to generate content";
+    return "TEMP – content skipped due to rate limit (429)";
   }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 app.listen(PORT, () => {
