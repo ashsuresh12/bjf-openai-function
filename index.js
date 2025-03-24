@@ -32,7 +32,7 @@ app.get("/generate-batch", async (req, res) => {
     const response = await sheets.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId,
-      range: `${sourceSheet}!B2:I151`
+      range: `${sourceSheet}!B2:I` // From row 2 onward
     });
 
     const rows = response.data.values || [];
@@ -60,7 +60,7 @@ app.get("/generate-batch", async (req, res) => {
 
       for (const variant of variants) {
         const fullTitle = `${websiteTitle} - ${variant}`;
-        const weight = normaliseWeightToKg(variant);
+        const { weight, unit } = extractWeightAndUnit(variant);
         const seoTitle = getSeoTitle(websiteTitle, variant);
 
         const rowOutput = Array(106).fill("");
@@ -70,10 +70,11 @@ app.get("/generate-batch", async (req, res) => {
         rowOutput[3] = "BJF";
         rowOutput[4] = type;
         rowOutput[5] = tags;
-        rowOutput[6] = sku;
-        rowOutput[7] = weight;
-        rowOutput[64] = seoTitle;
-        rowOutput[65] = seoDescription;
+        // Column G intentionally left blank
+        rowOutput[44] = weight;      // AS
+        rowOutput[45] = unit;        // AT
+        rowOutput[64] = seoTitle;    // BN
+        rowOutput[65] = seoDescription; // BO
 
         output.push(rowOutput);
       }
@@ -122,16 +123,26 @@ function inferTypeFromCollections(input) {
   return "Pantry";
 }
 
-function normaliseWeightToKg(text) {
+function extractWeightAndUnit(text) {
   const match = text.match(/(\d+(?:\.\d+)?)(g|kg|ml|l)/i);
-  if (!match) return "";
+  if (!match) return { weight: "", unit: "" };
+
   let [_, num, unit] = match;
   let value = parseFloat(num);
   unit = unit.toLowerCase();
 
-  if (unit === "g" || unit === "ml") return (value / 1000).toFixed(3).replace(/\.?0+$/, "");
-  if (unit === "kg" || unit === "l") return value.toString();
-  return "";
+  let normalised = "";
+  let unitOut = "";
+
+  if (unit === "g" || unit === "ml") {
+    normalised = (value / 1000).toFixed(3).replace(/\.?0+$/, "");
+    unitOut = unit === "g" ? "kgs" : "Litre";
+  } else if (unit === "kg" || unit === "l") {
+    normalised = value.toString();
+    unitOut = unit === "kg" ? "kgs" : "Litre";
+  }
+
+  return { weight: normalised, unit: unitOut };
 }
 
 function getSeoTitle(product, variant) {
