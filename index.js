@@ -32,6 +32,7 @@ app.get("/generate-batch", async (req, res) => {
     const sourceSheet = "Raw Data 22Mar";
     const outputSheet = "v2 Output";
 
+    console.log("Reading from Raw Data 22Mar...");
     const readRange = `${sourceSheet}!B2:I`;
     const response = await sheets.spreadsheets.values.get({
       auth: authClient,
@@ -40,8 +41,12 @@ app.get("/generate-batch", async (req, res) => {
     });
 
     const rows = response.data.values || [];
-    if (rows.length === 0) return res.status(400).send("No data found.");
+    if (rows.length === 0) {
+      console.log("No data found.");
+      return res.status(400).send("No data found.");
+    }
 
+    console.log(`Read ${rows.length} rows.`);
     const output = [];
 
     for (const row of rows) {
@@ -58,6 +63,8 @@ app.get("/generate-batch", async (req, res) => {
 
       for (const variant of variants) {
         const title = `${websiteTitle} - ${variant}`;
+        console.log("Processing variant:", title);
+
         const description = await generateDescription(websiteTitle);
         const seoDescription = await generateSEODescription(websiteTitle);
         const seoTitle = getSeoTitle(websiteTitle, variant);
@@ -73,7 +80,7 @@ app.get("/generate-batch", async (req, res) => {
       }
     }
 
-    // Write to v2 Output starting at Row 4
+    console.log(`Prepared ${output.length} output rows. Writing to v2 Output...`);
     const startRow = 4;
     await sheets.spreadsheets.values.update({
       auth: authClient,
@@ -85,9 +92,10 @@ app.get("/generate-batch", async (req, res) => {
       }
     });
 
+    console.log("✅ Batch write complete.");
     res.status(200).json({ message: "Batch processed", rows: output.length });
   } catch (err) {
-    console.error("Error:", err.message);
+    console.error("❌ ERROR:", err.message);
     res.status(500).send("Something went wrong");
   }
 });
@@ -112,12 +120,14 @@ function getSeoTitle(product, variant) {
 }
 
 async function generateDescription(title) {
+  console.log("Calling OpenAI for description of:", title);
   const prompt = `Write a concise, neutral product description in UK English for '${title}'. Avoid repeating the title at the start. Do not include any reference to product sizes like '250g' or '1L'. Keep it under 400 characters, avoid salesy tone, and ensure natural, flowing copy. No headers or bullet points.`;
 
   return await callOpenAI(prompt);
 }
 
 async function generateSEODescription(title) {
+  console.log("Calling OpenAI for SEO description of:", title);
   const prompt = `Write an SEO-friendly description in UK English under 160 characters for a food or pantry item called '${title}'. Do not mention the product title or size. Start with a natural phrase and include a real-world benefit or use.`;
 
   return await callOpenAI(prompt);
@@ -151,7 +161,7 @@ async function callOpenAI(prompt) {
     );
     return res.data.choices[0].message.content.trim();
   } catch (err) {
-    console.error("OpenAI error:", err.message);
+    console.error("❌ OpenAI error:", err.message);
     return "Error: Unable to generate content";
   }
 }
