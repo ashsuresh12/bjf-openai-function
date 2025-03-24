@@ -2,7 +2,6 @@ import express from "express";
 import { google } from "googleapis";
 import axios from "axios";
 import cors from "cors";
-import fs from "fs";
 
 const app = express();
 app.use(express.json());
@@ -10,9 +9,8 @@ app.use(cors());
 
 const PORT = process.env.PORT || 8080;
 
-// Load service account credentials
-const credentials = JSON.parse(fs.readFileSync("bjf-service-account.json"));
-
+// Load credentials securely from environment variable
+const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
 const auth = new google.auth.GoogleAuth({
   credentials,
   scopes: [
@@ -30,13 +28,11 @@ app.get("/generate-batch", async (req, res) => {
     const sheets = google.sheets({ version: "v4", auth });
     const authClient = await auth.getClient();
 
-    // IDs and sheet names
     const spreadsheetId = "1xSOYyVlQJfi64ZyCJ0pnhdqOKeO5cX02F1RnIZ1eHeo";
     const sourceSheet = "Raw Data 22Mar";
     const outputSheet = "v2 Output";
 
-    // Read data from Row 2 down
-    const readRange = `${sourceSheet}!B2:I101`;
+    const readRange = `${sourceSheet}!B2:I`;
     const response = await sheets.spreadsheets.values.get({
       auth: authClient,
       spreadsheetId,
@@ -58,8 +54,7 @@ app.get("/generate-batch", async (req, res) => {
       if (!productTitle || !variantsRaw) continue;
 
       const variants = variantsRaw.split(",").map(v => v.trim());
-      const tags = formatTags(collections + "," + extraCollection);
-      const handle = productTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const mergedCollections = formatTags(collections + "," + extraCollection);
 
       for (const variant of variants) {
         const title = `${websiteTitle} - ${variant}`;
@@ -68,27 +63,22 @@ app.get("/generate-batch", async (req, res) => {
         const seoTitle = getSeoTitle(websiteTitle, variant);
 
         const rowOutput = Array(106).fill("");
-        rowOutput[0] = handle;
-        rowOutput[1] = title;
-        rowOutput[2] = description;
-        rowOutput[3] = "BJF";
-        rowOutput[4] = "Oil";
-        rowOutput[5] = tags;
-        rowOutput[9] = "TRUE";
-        rowOutput[34] = "Size";
-        rowOutput[35] = variant;
-        rowOutput[65] = seoTitle;
-        rowOutput[66] = seoDescription;
+        rowOutput[1] = title;                  // Column B
+        rowOutput[2] = description;            // Column C
+        rowOutput[5] = mergedCollections;      // Column F
+        rowOutput[64] = seoTitle;              // Column BN
+        rowOutput[65] = seoDescription;        // Column BO
 
         output.push(rowOutput);
       }
     }
 
-    // Write to v2 Output, starting at row 4
+    // Write to v2 Output starting at Row 4
+    const startRow = 4;
     await sheets.spreadsheets.values.update({
       auth: authClient,
       spreadsheetId,
-      range: `${outputSheet}!A4`,
+      range: `${outputSheet}!A${startRow}`,
       valueInputOption: "RAW",
       resource: {
         values: output
@@ -117,8 +107,8 @@ function formatTags(raw) {
 }
 
 function getSeoTitle(product, variant) {
-  let base = `${product} ${variant}`;
-  return base.length > 60 ? base.slice(0, 57) + "..." : base;
+  let title = `${product} ${variant}`.replace(/\(.*?\)/g, "").trim();
+  return title.length > 60 ? title.slice(0, 57) + "..." : title;
 }
 
 async function generateDescription(title) {
@@ -142,8 +132,7 @@ async function callOpenAI(prompt) {
         messages: [
           {
             role: "system",
-            content:
-              "You are a UK English product content writer. Keep descriptions authentic, neutral, and practical. Avoid repeating 'Discover' or 'Indulge'."
+            content: "You are a UK English product content writer. Keep descriptions authentic, neutral, and practical. Avoid repeating 'Discover' or 'Indulge'."
           },
           {
             role: "user",
