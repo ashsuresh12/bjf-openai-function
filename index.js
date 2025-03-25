@@ -1,18 +1,17 @@
 import express from "express";
 import { google } from "googleapis";
 import { GoogleAuth } from "google-auth-library";
-import { Configuration, OpenAIApi } from "openai";
+import OpenAI from "openai"; // ✅ updated for SDK v4+
 
 const app = express();
 const port = process.env.PORT || 10000;
 
-// Setup OpenAI
-const configuration = new Configuration({
+// OpenAI setup
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const openai = new OpenAIApi(configuration);
 
-// Setup Google Sheets
+// Google Sheets setup
 const auth = new GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
@@ -22,14 +21,14 @@ const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_ID = "1xSOYyVlQJfi64ZyCJ0pnhdqOKeO5cX02F1RnIZ1eHeo";
 const SHEET_NAME = "Nutriscore";
 
-// NutriScore prompt logic
+// Generate NutriScore + Explanation
 async function getNutriScoreAndExplanation(title) {
   const prompt = `Give a NutriScore (A to E) and a tactful explanation for the product "${title}". Respond in this format:
 NutriScore: X
 Explanation: <short explanation>`;
 
-  const response = await openai.createChatCompletion({
-    model: "gpt-4o", // or gpt-4o-mini if preferred
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
     messages: [
       {
         role: "system",
@@ -41,7 +40,7 @@ Explanation: <short explanation>`;
     temperature: 0.7,
   });
 
-  const text = response.data.choices[0].message.content;
+  const text = response.choices[0].message.content;
   const scoreMatch = text.match(/NutriScore:\s*([A-E])/i);
   const explanationMatch = text.match(/Explanation:\s*(.+)/i);
 
@@ -51,7 +50,7 @@ Explanation: <short explanation>`;
   };
 }
 
-// NutriScore test route
+// Test route
 app.get("/generate-nutriscore-test", async (req, res) => {
   try {
     const readRange = `${SHEET_NAME}!A2:A101`;
