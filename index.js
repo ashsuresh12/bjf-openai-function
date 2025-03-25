@@ -15,10 +15,6 @@ const auth = new google.auth.GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 });
 
-app.get("/", (req, res) => {
-  res.send("🟢 BJF OpenAI Function is live.");
-});
-
 app.get("/generate-batch", async (req, res) => {
   try {
     const sheets = google.sheets({ version: "v4", auth });
@@ -27,18 +23,34 @@ app.get("/generate-batch", async (req, res) => {
     const spreadsheetId = "1xSOYyVlQJfi64ZyCJ0pnhdqOKeO5cX02F1RnIZ1eHeo";
     const sourceSheet = "Raw Data 22Mar";
     const outputSheet = "v2 Output";
+    const logCol = 107; // DC
 
-    console.log("🔄 Reading Raw Data...");
-    const response = await sheets.spreadsheets.values.get({
-      auth: authClient,
+    // STEP 1: Get last processed row from A1
+    const a1res = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sourceSheet}!B2:I` // From row 2 onward
+      range: `${outputSheet}!A1`
+    });
+    let startRow = parseInt(a1res.data.values?.[0]?.[0]) || 2;
+
+    // STEP 2: Get next 20 rows from source
+    const sourceRange = `${sourceSheet}!B${startRow}:I${startRow + 19}`;
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: sourceRange
     });
 
     const rows = response.data.values || [];
-    const output = [];
+    if (rows.length === 0) {
+      return res.status(200).send("✅ No more products to process.");
+    }
 
-    for (let row of rows) {
+    const output = [];
+    let processedCount = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const productRow = startRow + i;
+
       const sku = row[0]?.trim() || "";
       const productTitle = row[1]?.trim() || "";
       const collections = row[2] || "";
@@ -70,35 +82,44 @@ app.get("/generate-batch", async (req, res) => {
         rowOutput[3] = "BJF";
         rowOutput[4] = type;
         rowOutput[5] = tags;
-        // Column G intentionally left blank
-        rowOutput[44] = weight;      // AS
-        rowOutput[45] = unit;        // AT
-        rowOutput[64] = seoTitle;    // BN
-        rowOutput[65] = seoDescription; // BO
+        rowOutput[44] = weight;
+        rowOutput[45] = unit;
+        rowOutput[64] = seoTitle;
+        rowOutput[65] = seoDescription;
+        rowOutput[logCol - 1] = `✅ ${productTitle}`; // DC column (0-based index)
 
         output.push(rowOutput);
+        processedCount++;
       }
     }
 
-    const startRow = 4;
-    console.log(`✅ Writing ${output.length} rows to v2 Output starting from row ${startRow}...`);
-    const writeResult = await sheets.spreadsheets.values.update({
-      auth: authClient,
+    // STEP 3: Write rows to v2 Output
+    const outputStartRow = 4;
+    const rangeStart = outputStartRow + (startRow - 2) * 3; // Estimating 3 variants per product
+    await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${outputSheet}!A${startRow}`,
+      range: `${outputSheet}!A${rangeStart}`,
       valueInputOption: "RAW",
       resource: { values: output }
     });
 
-    console.log("📝 Sheets write result:", writeResult.status, writeResult.statusText);
-    res.status(200).json({ message: `✅ v2.2 complete: ${output.length} rows written.` });
+    // STEP 4: Update A1 with new starting row
+    const newStartRow = startRow + rows.length;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${outputSheet}!A1`,
+      valueInputOption: "RAW",
+      resource: { values: [[newStartRow.toString()]] }
+    });
+
+    res.status(200).json({ message: `✅ Processed ${processedCount} variant rows.` });
   } catch (err) {
     console.error("❌ ERROR:", err.message);
     res.status(500).send("Something went wrong");
   }
 });
 
-// ---------- Utilities ----------
+// -------- Utilities --------
 
 function formatTags(raw) {
   return raw
@@ -151,13 +172,11 @@ function getSeoTitle(product, variant) {
 }
 
 async function generateDescription(title) {
-  console.log("Calling GPT-4o-mini for description of:", title);
   const prompt = `Write a concise, neutral product description in UK English for '${title}'. Avoid repeating the title at the start. Do not include any reference to product sizes like '250g' or '1L'. Keep it under 400 characters, avoid salesy tone, and ensure natural, flowing copy. No headers or bullet points.`;
   return await callOpenAI(prompt);
 }
 
 async function generateSEODescription(title) {
-  console.log("Calling GPT-4o-mini for SEO description of:", title);
   const prompt = `Write an SEO-friendly description in UK English under 160 characters for a food or pantry item called '${title}'. Do not mention the product title or size. Start with a natural phrase and include a real-world benefit or use.`;
   return await callOpenAI(prompt);
 }
@@ -200,5 +219,5 @@ function sleep(ms) {
 }
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🟢 Server running on port ${PORT}`);
 });
