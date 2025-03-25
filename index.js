@@ -18,25 +18,22 @@ const auth = new google.auth.GoogleAuth({
 app.get("/generate-batch", async (req, res) => {
   try {
     const sheets = google.sheets({ version: "v4", auth });
-    const authClient = await auth.getClient();
 
     const spreadsheetId = "1xSOYyVlQJfi64ZyCJ0pnhdqOKeO5cX02F1RnIZ1eHeo";
     const sourceSheet = "Raw Data 22Mar";
     const outputSheet = "v2 Output";
-    const logCol = 107; // DC
+    const logCol = 107; // Column DC
+    const batchSize = 100;
 
-    // STEP 1: Get last processed row from A1
     const a1res = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range: `${outputSheet}!A1`
     });
     let startRow = parseInt(a1res.data.values?.[0]?.[0]) || 2;
 
-    // STEP 2: Get next 20 rows from source
-    const sourceRange = `${sourceSheet}!B${startRow}:I${startRow + 19}`;
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: sourceRange
+      range: `${sourceSheet}!B${startRow}:I${startRow + batchSize - 1}`
     });
 
     const rows = response.data.values || [];
@@ -86,16 +83,15 @@ app.get("/generate-batch", async (req, res) => {
         rowOutput[45] = unit;
         rowOutput[64] = seoTitle;
         rowOutput[65] = seoDescription;
-        rowOutput[logCol - 1] = `✅ ${productTitle}`; // DC column (0-based index)
+        rowOutput[logCol - 1] = `✅ ${productTitle}`;
 
         output.push(rowOutput);
         processedCount++;
       }
     }
 
-    // STEP 3: Write rows to v2 Output
     const outputStartRow = 4;
-    const rangeStart = outputStartRow + (startRow - 2) * 3; // Estimating 3 variants per product
+    const rangeStart = outputStartRow + (startRow - 2) * 3;
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `${outputSheet}!A${rangeStart}`,
@@ -103,7 +99,6 @@ app.get("/generate-batch", async (req, res) => {
       resource: { values: output }
     });
 
-    // STEP 4: Update A1 with new starting row
     const newStartRow = startRow + rows.length;
     await sheets.spreadsheets.values.update({
       spreadsheetId,
@@ -119,7 +114,24 @@ app.get("/generate-batch", async (req, res) => {
   }
 });
 
-// -------- Utilities --------
+app.get("/reset", async (req, res) => {
+  try {
+    const sheets = google.sheets({ version: "v4", auth });
+    const spreadsheetId = "1xSOYyVlQJfi64ZyCJ0pnhdqOKeO5cX02F1RnIZ1eHeo";
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: "v2 Output!A1",
+      valueInputOption: "RAW",
+      resource: { values: [["2"]] }
+    });
+    res.status(200).send("🔄 Reset A1 to 2 (start from top)");
+  } catch (err) {
+    console.error("❌ Reset error:", err.message);
+    res.status(500).send("❌ Failed to reset A1");
+  }
+});
+
+// ----- UTILITIES -----
 
 function formatTags(raw) {
   return raw
