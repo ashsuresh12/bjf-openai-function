@@ -1,17 +1,17 @@
 import express from "express";
 import { google } from "googleapis";
 import { GoogleAuth } from "google-auth-library";
-import OpenAI from "openai"; // ✅ updated for SDK v4+
+import OpenAI from "openai";
 
 const app = express();
 const port = process.env.PORT || 10000;
 
-// OpenAI setup
+// OpenAI Setup
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Google Sheets setup
+// Google Sheets Setup
 const auth = new GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
@@ -21,7 +21,6 @@ const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_ID = "1xSOYyVlQJfi64ZyCJ0pnhdqOKeO5cX02F1RnIZ1eHeo";
 const SHEET_NAME = "Nutriscore";
 
-// Generate NutriScore + Explanation
 async function getNutriScoreAndExplanation(title) {
   const prompt = `Give a NutriScore (A to E) and a tactful explanation for the product "${title}". Respond in this format:
 NutriScore: X
@@ -50,43 +49,49 @@ Explanation: <short explanation>`;
   };
 }
 
-// Test route
 app.get("/generate-nutriscore-test", async (req, res) => {
   try {
-    const readRange = `${SHEET_NAME}!A2:A101`;
-    const sheetData = await sheets.spreadsheets.values.get({
+    const readRange = `${SHEET_NAME}!A2:B1001`; // Handle & Product Title
+    const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: readRange,
     });
 
-    const titles = sheetData.data.values || [];
-    const results = [];
+    const rows = response.data.values || [];
+    const handleMap = new Map();
 
-    for (let i = 0; i < titles.length; i++) {
-      const title = titles[i][0];
-      if (!title) {
-        results.push(["", ""]);
-        continue;
+    // Group by handle
+    rows.forEach(([handle, title], i) => {
+      if (!handle || !title) return;
+      if (!handleMap.has(handle)) {
+        handleMap.set(handle, { title, rows: [i] });
+      } else {
+        handleMap.get(handle).rows.push(i);
       }
+    });
 
-      console.log(`🔍 Processing: ${title}`);
+    // Build results (C = Score, D = Explanation)
+    const scoreResults = Array(rows.length).fill(["", ""]);
+
+    for (const [handle, { title, rows: indices }] of handleMap.entries()) {
+      console.log(`🔍 Processing: ${title} (Handle: ${handle})`);
       try {
         const { score, explanation } = await getNutriScoreAndExplanation(title);
-        results.push([score, explanation]);
+        for (const rowIndex of indices) {
+          scoreResults[rowIndex] = [score, explanation];
+        }
       } catch (err) {
         console.error(`❌ Failed for "${title}":`, err.message);
-        results.push(["Error", ""]);
       }
-
-      await new Promise((resolve) => setTimeout(resolve, 1000)); // 1s delay
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
-    const writeRange = `${SHEET_NAME}!B2:C${results.length + 1}`;
+    const writeRange = `${SHEET_NAME}!C2:D${rows.length + 1}`;
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
       range: writeRange,
       valueInputOption: "RAW",
-      requestBody: { values: results },
+      requestBody: { values: scoreResults },
     });
 
     res.send("✅ NutriScore test batch completed.");
