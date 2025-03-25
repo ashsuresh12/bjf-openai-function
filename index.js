@@ -1,7 +1,7 @@
-const express = require("express");
-const { google } = require("googleapis");
-const { GoogleAuth } = require("google-auth-library");
-const { Configuration, OpenAIApi } = require("openai");
+import express from "express";
+import { google } from "googleapis";
+import { GoogleAuth } from "google-auth-library";
+import { Configuration, OpenAIApi } from "openai";
 
 const app = express();
 const port = process.env.PORT || 10000;
@@ -22,14 +22,14 @@ const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_ID = "1xSOYyVlQJfi64ZyCJ0pnhdqOKeO5cX02F1RnIZ1eHeo";
 const SHEET_NAME = "Nutriscore";
 
-// NutriScore prompt
+// NutriScore prompt logic
 async function getNutriScoreAndExplanation(title) {
   const prompt = `Give a NutriScore (A to E) and a tactful explanation for the product "${title}". Respond in this format:
 NutriScore: X
 Explanation: <short explanation>`;
 
   const response = await openai.createChatCompletion({
-    model: "gpt-4o", // You can change to 'gpt-4o' or 'gpt-4o-mini'
+    model: "gpt-4o", // or gpt-4o-mini if preferred
     messages: [
       {
         role: "system",
@@ -51,7 +51,7 @@ Explanation: <short explanation>`;
   };
 }
 
-// Route for NutriScore test batch
+// NutriScore test route
 app.get("/generate-nutriscore-test", async (req, res) => {
   try {
     const readRange = `${SHEET_NAME}!A2:A101`;
