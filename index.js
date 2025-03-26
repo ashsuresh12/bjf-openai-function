@@ -1,136 +1,124 @@
 import express from "express";
 import { google } from "googleapis";
-import { GoogleAuth } from "google-auth-library";
-import dotenv from "dotenv";
-import { OpenAI } from "openai";
+import { config } from "dotenv";
+import OpenAI from "openai";
 
-dotenv.config();
+config();
+
 const app = express();
 const port = process.env.PORT || 10000;
 
-const sheets = google.sheets("v4");
-const auth = new GoogleAuth({
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const SHEET_NAME = "Ingredients";
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME = "Nutriscore";
 
-app.get("/generate-nutriscore-batch", async (req, res) => {
+app.get("/generate-ingredients-batch", async (req, res) => {
   try {
-    const authClient = await auth.getClient();
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: "v4", auth: client });
 
-    // Step 1: Get current F1 (last processed row)
-    const f1Res = await sheets.spreadsheets.values.get({
-      auth: authClient,
+    const readRange = `${SHEET_NAME}!A2:A51`;
+    const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!F1`,
+      range: readRange
     });
 
-    let startRow = parseInt(f1Res.data.values?.[0]?.[0]) || 2;
-    const batchSize = 500;
-    const endRow = startRow + batchSize - 1;
+    const titles = response.data.values?.flat() || [];
+    const output = [];
+    const sources = [];
 
-    console.log(`🔁 Processing rows ${startRow} to ${endRow}...`);
-
-    // Step 2: Fetch batch data
-    const readRange = `${SHEET_NAME}!A${startRow}:B${endRow}`;
-    const readRes = await sheets.spreadsheets.values.get({
-      auth: authClient,
-      spreadsheetId: SPREADSHEET_ID,
-      range: readRange,
-    });
-
-    const rows = readRes.data.values || [];
-    if (rows.length === 0) {
-      console.log("✅ All done — no more rows to process.");
-      return res.status(200).send("All done.");
-    }
-
-    // Step 3: Group by handle (Column A)
-    const uniqueScores = {};
-    for (let i = 0; i < rows.length; i++) {
-      const handle = rows[i][0]?.trim();
-      const title = rows[i][1]?.trim();
-      if (!handle || !title) continue;
-      if (!uniqueScores[handle]) uniqueScores[handle] = title;
-    }
-
-    // Step 4: Call OpenAI for each unique handle
-    const handleToResult = {};
-    for (const [handle, title] of Object.entries(uniqueScores)) {
-      console.log(`🔍 Scoring ${handle}: ${title}`);
-
-      try {
-        const messages = [
-          {
-            role: "system",
-            content:
-              "You are a nutrition labelling assistant. Based on the product name, assign a NutriScore from A (healthiest) to E (least healthy).",
-          },
-          {
-            role: "user",
-            content: `Product: "${title}"\n\nReturn a NutriScore (A-E) and a short explanation suitable for customers.`,
-          },
-        ];
-
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4o",
-          messages,
-          max_tokens: 150,
-          temperature: 0.5,
-        });
-
-        const result = completion.choices[0].message.content.trim();
-        const scoreMatch = result.match(/\b([A-E])\b/);
-        const score = scoreMatch ? scoreMatch[1] : "C";
-        const explanation = result.replace(/^.*?[A-E]\b[^\w]*/, "").trim();
-
-        handleToResult[handle] = { score, explanation };
-        await new Promise((r) => setTimeout(r, 1000)); // 1s delay
-
-      } catch (err) {
-        console.error(`❌ OpenAI error for ${handle}:`, err.message);
-        handleToResult[handle] = { score: "", explanation: "Error" };
+    for (const title of titles) {
+      if (!title) {
+        output.push([""]);
+        sources.push([""]);
+        continue;
       }
+
+      const isConsumable = await checkIfConsumable(title);
+      if (!isConsumable) {
+        output.push([""]);
+        sources.push([""]);
+        continue;
+      }
+
+      const formattedPrompt = `Give the ingredients for '${title}' in a human-consumable format. Include percentages like '100%' where applicable. Return only the list of ingredients, no extra info.`;
+      const sourcePrompt = `Where did you find the ingredients for '${title}'? Reply with sources like website, packaging, or label.`;
+
+      const [ingredients, source] = await Promise.all([
+        getOpenAIResponse(formattedPrompt),
+        getOpenAIResponse(sourcePrompt)
+      ]);
+
+      const formattedJson = JSON.stringify({
+        type: "root",
+        children: [
+          {
+            type: "paragraph",
+            children: [
+              { type: "text", value: "Ingredients:", bold: true },
+              { type: "text", value: ingredients.trim() }
+            ]
+          }
+        ]
+      });
+
+      output.push([formattedJson]);
+      sources.push([source.trim()]);
     }
 
-    // Step 5: Write results back to Columns C and D
-    const output = rows.map(([handle]) => {
-      const entry = handleToResult[handle] || { score: "", explanation: "" };
-      return [entry.score, entry.explanation];
-    });
-
-    const writeRange = `${SHEET_NAME}!C${startRow}:D${startRow + output.length - 1}`;
     await sheets.spreadsheets.values.update({
-      auth: authClient,
       spreadsheetId: SPREADSHEET_ID,
-      range: writeRange,
+      range: `${SHEET_NAME}!B2:B${titles.length + 1}`,
       valueInputOption: "RAW",
-      requestBody: { values: output },
+      requestBody: { values: output }
     });
 
-    // Step 6: Update F1 with new position
-    const newF1 = [[(startRow + output.length).toString()]];
     await sheets.spreadsheets.values.update({
-      auth: authClient,
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!F1`,
+      range: `${SHEET_NAME}!C2:C${titles.length + 1}`,
       valueInputOption: "RAW",
-      requestBody: { values: newF1 },
+      requestBody: { values: sources }
     });
 
-    console.log(`✅ Finished rows ${startRow} to ${startRow + output.length - 1}`);
-    res.status(200).send(`Processed ${output.length} rows.`);
-
-  } catch (err) {
-    console.error("❌ Unexpected error:", err.message);
-    res.status(500).send("Something went wrong.");
+    res.send("✅ Ingredients written to sheet");
+  } catch (error) {
+    console.error("❌ Error generating ingredients:", error);
+    res.status(500).send("Something went wrong");
   }
 });
 
+async function checkIfConsumable(title) {
+  const prompt = `Is '${title}' a human-consumable food or drink item? Reply only YES or NO.`;
+  const response = await getOpenAIResponse(prompt);
+  return response.toLowerCase().includes("yes");
+}
+
+async function getOpenAIResponse(prompt) {
+  const chat = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "system",
+        content: "You are a food product content assistant. Only respond concisely and accurately."
+      },
+      {
+        role: "user",
+        content: prompt
+      }
+    ],
+    temperature: 0.2,
+    max_tokens: 200
+  });
+
+  return chat.choices[0].message.content.trim();
+}
+
 app.listen(port, () => {
-  console.log(`🟢 Server running on port ${port}`);
+  console.log(`🟢 Ingredients service live on port ${port}`);
 });
