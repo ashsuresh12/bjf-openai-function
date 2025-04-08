@@ -62,14 +62,14 @@ async function writeStorageInstructions(startRow, values) {
 }
 
 async function generateInstruction(title, description) {
-  const prompt = `Provide practical storage instructions for a product titled "${title}". If the product is food, drinks, or pantry related, give relevant, customer-facing advice such as "Store in a cool, dry place". Be concise and avoid overly technical language.`;
+  const prompt = `Write concise storage instructions suitable for an eCommerce product page. Do not mention the product name. Only include practical advice, such as “Store in a cool, dry place,” or “Keep tightly sealed.” Do not say things like “Use within recommended timeframe on packaging.” Keep it under 30 words.`;
 
   const payload = {
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: "You are an expert at writing product storage instructions for eCommerce customers. Keep it short, clear, and tactful.",
+        content: "You are an expert at writing clean, concise storage instructions for product listings. Keep it practical and omit product names or general packaging advice.",
       },
       {
         role: "user",
