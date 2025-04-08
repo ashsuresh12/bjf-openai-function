@@ -1,8 +1,8 @@
 {
-  "name": "bjf-openai-function",
+  "name": "nutriscore-generator",
   "version": "1.0.0",
-  "main": "index.js",
   "type": "module",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
@@ -11,7 +11,6 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "googleapis": "^125.0.0",
-    "openai": "^4.21.1"
+    "googleapis": "^125.0.0"
   }
 }

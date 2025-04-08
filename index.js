@@ -1,153 +1,115 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import { google } from "googleapis";
-import { OpenAI } from "openai";
+import axios from "axios";
+import dotenv from "dotenv";
 
 dotenv.config();
+
 const app = express();
 app.use(cors());
-app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
-const SHEET_NAME = "Ingredients";
-const BATCH_SIZE = 500;
+const SHEET_ID = process.env.SPREADSHEET_ID;
+const GOOGLE_CREDENTIALS = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+  credentials: GOOGLE_CREDENTIALS,
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
-const sheets = google.sheets({ version: "v4", auth });
-const spreadsheetId = process.env.SPREADSHEET_ID;
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-const disclaimer = "This ingredient list is based on data from suppliers and may vary. Please check product packaging for the most accurate details.";
-
-function isFoodOrBeverage(title) {
-  const nonConsumables = ["toothpaste", "mouthwash", "disinfectant", "spray", "detergent", "cleaner"];
-  const lower = title.toLowerCase();
-  return !nonConsumables.some(term => lower.includes(term));
+async function getSheetClient() {
+  const client = await auth.getClient();
+  const sheets = google.sheets({ version: "v4", auth: client });
+  return sheets;
 }
 
-function formatIngredientsJSON(text) {
-  return {
-    type: "root",
-    children: [
-      {
-        type: "paragraph",
-        children: [
-          { type: "text", value: "Ingredients:", bold: true },
-          { type: "text", value: " " + text }
-        ]
-      }
-    ]
-  };
-}
+async function generateNutriScore(title) {
+  const prompt = `Give a NutriScore (A to E) and a brief explanation (1-2 lines) for a food product titled "${title}". NutriScore A is healthiest, E is least. Use a tactful and customer-facing explanation, avoid negative wording like "unhealthy".`;
 
-async function getOpenAIIngredients(title) {
-  const prompt = `List the ingredients for this food or beverage product in natural UK English, ideally with percentages if available: "${title}". Respond with just the ingredients.`;
-  const response = await openai.chat.completions.create({
+  const payload = {
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: "You are a helpful assistant that provides clean ingredient lists for food and beverage products."
+        content: "You are a nutritionist generating NutriScores and tactful customer-facing explanations for food products in UK English.",
       },
       {
         role: "user",
-        content: prompt
-      }
+        content: prompt,
+      },
     ],
-    temperature: 0.5
+    temperature: 0.4,
+    max_tokens: 200,
+  };
+
+  const response = await axios.post("https://api.openai.com/v1/chat/completions", payload, {
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+    },
   });
 
-  return response.choices[0].message.content.trim();
+  const content = response.data.choices[0].message.content.trim();
+  const match = content.match(/NutriScore\s*[:\-]?\s*([A-E])\s*[\n\-:,\.]?\s*(.+)/i);
+
+  if (!match) {
+    console.warn("❌ Unexpected format:", content);
+    return ["", ""];
+  }
+
+  return [match[1].toUpperCase(), match[2].trim()];
 }
 
-app.get("/generate-ingredients-batch", async (req, res) => {
+app.get("/generate-nutriscore-batch", async (req, res) => {
   try {
+    const sheets = await getSheetClient();
+
     const meta = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${SHEET_NAME}!F1`
+      spreadsheetId: SHEET_ID,
+      range: "Nutriscore!F1",
     });
 
-    let startRow = parseInt(meta.data.values?.[0]?.[0] || "2");
-    const range = `${SHEET_NAME}!A${startRow}:A${startRow + BATCH_SIZE - 1}`;
-
-    const result = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range
+    let row = parseInt(meta.data.values?.[0]?.[0] || "2");
+    const batchSize = 100;
+    const titlesRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `Nutriscore!A${row}:A${row + batchSize - 1}`,
     });
 
-    const titles = result.data.values || [];
-    if (titles.length === 0) {
-      console.log("🛑 No more products to process.");
-      return res.status(200).send("No more products to process.");
+    const titles = titlesRes.data.values?.map(r => r[0]).filter(Boolean) || [];
+    const results = [];
+
+    for (const title of titles) {
+      console.log("⚙️ Generating NutriScore for:", title);
+      const [score, explanation] = await generateNutriScore(title);
+      results.push(["", score, explanation]);
     }
 
-    const ingredientsOut = [];
-    const sourcesOut = [];
-
-    console.log(`🔄 Starting batch at row ${startRow}...`);
-
-    for (let i = 0; i < titles.length; i++) {
-      const rowNumber = startRow + i;
-      const title = titles[i][0];
-      if (!title) {
-        ingredientsOut.push([""]);
-        sourcesOut.push([""]);
-        continue;
-      }
-
-      console.log(`📦 Processing: ${title}`);
-
-      if (!isFoodOrBeverage(title)) {
-        console.log(`⚠️ Skipped non-consumable: ${title}`);
-        ingredientsOut.push([""]);
-        sourcesOut.push([""]);
-        continue;
-      }
-
-      try {
-        const ing = await getOpenAIIngredients(title);
-        const json = formatIngredientsJSON(ing);
-        ingredientsOut.push([JSON.stringify(json)]);
-        sourcesOut.push([disclaimer]);
-        console.log(`✅ Success for: ${title}`);
-      } catch (err) {
-        console.error(`❌ Error for ${title}:`, err.message);
-        ingredientsOut.push([""]);
-        sourcesOut.push([""]);
-      }
-    }
-
-    const ingredientsRange = `${SHEET_NAME}!B${startRow}:B${startRow + ingredientsOut.length - 1}`;
-    const sourcesRange = `${SHEET_NAME}!C${startRow}:C${startRow + sourcesOut.length - 1}`;
-
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        valueInputOption: "RAW",
-        data: [
-          { range: ingredientsRange, values: ingredientsOut },
-          { range: sourcesRange, values: sourcesOut }
-        ]
-      }
-    });
-
-    // Update pointer in F1
+    const updateRange = `Nutriscore!B${row}:D${row + results.length - 1}`;
     await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `${SHEET_NAME}!F1`,
+      spreadsheetId: SHEET_ID,
+      range: updateRange,
       valueInputOption: "RAW",
-      requestBody: { values: [[startRow + BATCH_SIZE]] }
+      requestBody: {
+        values: results,
+      },
     });
 
-    res.status(200).send(`✅ Processed rows ${startRow} to ${startRow + BATCH_SIZE - 1}`);
-  } catch (err) {
-    console.error("❌ Unexpected error:", err.message);
-    res.status(500).send("Error: " + err.message);
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: "Nutriscore!F1",
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[row + results.length]],
+      },
+    });
+
+    res.send(`✅ Successfully processed ${results.length} NutriScores from row ${row}`);
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+    res.status(500).send("Error generating NutriScores.");
   }
 });
 
