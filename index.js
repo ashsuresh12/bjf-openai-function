@@ -1,118 +1,153 @@
 import express from "express";
-import cors from "cors";
 import { google } from "googleapis";
+import { GoogleAuth } from "google-auth-library";
 import axios from "axios";
 import dotenv from "dotenv";
-
 dotenv.config();
 
 const app = express();
-app.use(cors());
+const port = process.env.PORT || 10000;
 
-const PORT = process.env.PORT || 10000;
-const SHEET_ID = process.env.SPREADSHEET_ID;
-const GOOGLE_CREDENTIALS = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const SHEET_NAME = "Nutriscore";
 
-const auth = new google.auth.GoogleAuth({
-  credentials: GOOGLE_CREDENTIALS,
+const BATCH_SIZE = 200;
+
+const auth = new GoogleAuth({
+  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
 
-async function getSheetClient() {
+async function getSheetsClient() {
   const client = await auth.getClient();
-  const sheets = google.sheets({ version: "v4", auth: client });
-  return sheets;
+  return google.sheets({ version: "v4", auth: client });
 }
 
-async function generateNutriScore(title) {
-  const prompt = `Give a NutriScore (A to E) and a brief explanation (1-2 lines) for a food product titled "${title}". NutriScore A is healthiest, E is least. Use a tactful and customer-facing explanation, avoid negative wording like "unhealthy".`;
+async function fetchSheetData() {
+  const sheets = await getSheetsClient();
+  const range = `${SHEET_NAME}!A2:D`;
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range,
+  });
+  return res.data.values || [];
+}
+
+async function getLastProcessedRow() {
+  const sheets = await getSheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!F1`,
+  });
+  return parseInt(res.data.values?.[0]?.[0] || "1", 10);
+}
+
+async function updateLastProcessedRow(rowNum) {
+  const sheets = await getSheetsClient();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!F1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[rowNum]] },
+  });
+}
+
+async function writeNutriScores(startIndex, scores) {
+  const sheets = await getSheetsClient();
+  const startRow = startIndex + 2; // offset A2 = index 0
+  const endRow = startRow + scores.length - 1;
+  const range = `${SHEET_NAME}!C${startRow}:D${endRow}`;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range,
+    valueInputOption: "RAW",
+    requestBody: { values: scores },
+  });
+}
+
+async function getNutriScore(title) {
+  const prompt = `Assign a NutriScore (A to E, where A is healthiest) to this food product: "${title}". Then explain your reasoning clearly but tactfully in 1–2 sentences. Avoid using negative terms like "unhealthy".`;
 
   const payload = {
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: "You are a nutritionist generating NutriScores and tactful customer-facing explanations for food products in UK English.",
+        content:
+          "You are a nutritionist rating foods with NutriScores. A = healthiest, E = least. Be tactful, concise, and informative. No negative language.",
       },
       {
         role: "user",
         content: prompt,
       },
     ],
-    temperature: 0.4,
+    temperature: 0.5,
     max_tokens: 200,
   };
 
-  const response = await axios.post("https://api.openai.com/v1/chat/completions", payload, {
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-  });
+  try {
+    const response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-  const content = response.data.choices[0].message.content.trim();
-  const match = content.match(/NutriScore\s*[:\-]?\s*([A-E])\s*[\n\-:,\.]?\s*(.+)/i);
-
-  if (!match) {
-    console.warn("❌ Unexpected format:", content);
-    return ["", ""];
+    const message = response.data.choices[0].message.content;
+    const match = message.match(/([A-E])\b/);
+    const score = match ? match[1] : "";
+    const explanation = message.replace(/^([A-E])\b[\s:\-]*/i, "").trim();
+    return [score, explanation];
+  } catch (err) {
+    console.error("❌ OpenAI error:", err.message);
+    return ["", "❌ Error"];
   }
-
-  return [match[1].toUpperCase(), match[2].trim()];
 }
 
 app.get("/generate-nutriscore-batch", async (req, res) => {
   try {
-    const sheets = await getSheetClient();
+    const allData = await fetchSheetData();
+    const startIndex = await getLastProcessedRow();
 
-    const meta = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: "Nutriscore!F1",
-    });
-
-    let row = parseInt(meta.data.values?.[0]?.[0] || "2");
-    const batchSize = 100;
-    const titlesRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `Nutriscore!A${row}:A${row + batchSize - 1}`,
-    });
-
-    const titles = titlesRes.data.values?.map(r => r[0]).filter(Boolean) || [];
-    const results = [];
-
-    for (const title of titles) {
-      console.log("⚙️ Generating NutriScore for:", title);
-      const [score, explanation] = await generateNutriScore(title);
-      results.push(["", score, explanation]);
+    const batch = allData.slice(startIndex, startIndex + BATCH_SIZE);
+    if (batch.length === 0) {
+      res.send("✅ All products processed.");
+      return;
     }
 
-    const updateRange = `Nutriscore!B${row}:D${row + results.length - 1}`;
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: updateRange,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: results,
-      },
-    });
+    console.log(`🚀 Starting NutriScore batch from row ${startIndex + 2}`);
 
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: "Nutriscore!F1",
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [[row + results.length]],
-      },
-    });
+    const output = [];
 
-    res.send(`✅ Successfully processed ${results.length} NutriScores from row ${row}`);
-  } catch (error) {
-    console.error("❌ Error:", error.message);
-    res.status(500).send("Error generating NutriScores.");
+    for (const row of batch) {
+      const title = row[0]?.trim();
+      if (!title) {
+        output.push(["", ""]);
+        continue;
+      }
+      console.log("🔎 Processing:", title);
+      const [score, explanation] = await getNutriScore(title);
+      output.push([score, explanation]);
+    }
+
+    await writeNutriScores(startIndex, output);
+    await updateLastProcessedRow(startIndex + BATCH_SIZE);
+    res.send(`✅ Processed rows ${startIndex + 2} to ${startIndex + BATCH_SIZE + 1}`);
+  } catch (err) {
+    console.error("❌ Unexpected error:", err.message);
+    res.status(500).send("❌ Error: " + err.message);
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🟢 Server running on port ${PORT}`);
+app.get("/reset-nutriscore", async (req, res) => {
+  await updateLastProcessedRow(0);
+  res.send("✅ NutriScore batch pointer reset to Row 2");
+});
+
+app.listen(port, () => {
+  console.log(`🟢 NutriScore server running on port ${port}`);
 });
