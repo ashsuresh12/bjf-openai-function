@@ -75,6 +75,32 @@ async function writeNutritionPanels(startRow, npis, jsons, sources) {
   });
 }
 
+function guessSource(title, desc) {
+  const txt = `${title} ${desc}`.toLowerCase();
+
+  if (/(lentil|rice|bean|chickpea|seed|grain|wheat|barley|flour|oat|spice|herb)/.test(txt)) {
+    return "Australian Food Composition Database (AFCD)";
+  }
+
+  if (/(mix|blend|trail|muesli|granola)/.test(txt)) {
+    return "Open Food Facts";
+  }
+
+  if (/(organic|vegan|high protein|keto|gluten-free)/.test(txt)) {
+    return "Eat This Much";
+  }
+
+  if (/(brand|manufacturer|retailer|company)/.test(txt)) {
+    return "Manufacturer Website";
+  }
+
+  if (/(panel|label|packaging|nutritional info|nutrition panel)/.test(txt)) {
+    return "Publicly Available Nutrition Panel";
+  }
+
+  return "OpenAI";
+}
+
 async function generateNutritionPanel() {
   const prompt = `Return a nutrition panel in the following format only (no extra text):\n\nEnergy, 3700 kJ\n Protein, 0 g \n Fat, total, 100 g \n - Saturated, 14 g \n - Monounsaturated, 73 g \n - Polyunsaturated, 11 g \n Carbohydrate, 0 g`;
 
@@ -176,10 +202,11 @@ app.get("/generate-nutrition-batch", async (req, res) => {
         ],
       });
 
-      seenHandles[handle] = { npi, json, source: "OpenAI" };
+      const source = guessSource(title, desc);
+      seenHandles[handle] = { npi, json, source };
       outputNPI.push(npi);
       outputJSON.push(json);
-      outputSource.push("OpenAI");
+      outputSource.push(source);
     }
 
     await writeNutritionPanels(startRow, outputNPI, outputJSON, outputSource);
