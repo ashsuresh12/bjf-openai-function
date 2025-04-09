@@ -127,9 +127,15 @@ app.get("/generate-nutrition-batch", async (req, res) => {
     for (let i = 0; i < rows.length; i++) {
       const [handle = "", title = "", desc = "", tags = ""] = rows[i];
 
-      const tagList = tags.toLowerCase().split(/[,\s]+/).map(t => t.trim());
-      const foodKeywords = ["food", "snack", "drink", "beverage", "pantry", "baking", "oil", "condiment", "sauce", "spice", "dairy", "meat", "frozen", "chilled", "grocery", "breakfast", "grain", "protein", "sweet", "savoury", "spread"];
-      const isFood = tagList.some(tag => foodKeywords.includes(tag));
+      const foodKeywords = [
+        "food", "snack", "drink", "beverage", "pantry", "baking", "oil", "condiment",
+        "sauce", "spice", "dairy", "meat", "frozen", "chilled", "grocery", "breakfast",
+        "grain", "protein", "sweet", "savoury", "spread", "nut", "seed", "fruit", "mix",
+        "herb", "cereal", "lentil", "pulse", "legume", "flour", "meal", "rice", "oat"
+      ];
+
+      const searchable = `${title} ${desc} ${tags}`.toLowerCase();
+      const isFood = foodKeywords.some(word => searchable.includes(word));
 
       console.log(`Row ${startRow + i}: handle='${handle}', title='${title}', isFood=${isFood}`);
 
