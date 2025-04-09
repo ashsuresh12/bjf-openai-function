@@ -127,7 +127,11 @@ app.get("/generate-nutrition-batch", async (req, res) => {
     for (let i = 0; i < rows.length; i++) {
       const [handle = "", title = "", desc = "", tags = ""] = rows[i];
 
-      const isFood = /\b(food|snack|drink|beverage|pantry|baking|oil|condiment|sauce|spice|dairy|meat|frozen|chilled|grocery|breakfast|grain|protein|sweet|savoury|spread)\b/i.test(tags);
+      const tagList = tags.toLowerCase().split(/[,\s]+/).map(t => t.trim());
+      const foodKeywords = ["food", "snack", "drink", "beverage", "pantry", "baking", "oil", "condiment", "sauce", "spice", "dairy", "meat", "frozen", "chilled", "grocery", "breakfast", "grain", "protein", "sweet", "savoury", "spread"];
+      const isFood = tagList.some(tag => foodKeywords.includes(tag));
+
+      console.log(`Row ${startRow + i}: handle='${handle}', title='${title}', isFood=${isFood}`);
 
       if (!isFood || !handle) {
         outputNPI.push("");
@@ -141,30 +145,35 @@ app.get("/generate-nutrition-batch", async (req, res) => {
         outputNPI.push(npi);
         outputJSON.push(json);
         outputSource.push(source);
-      } else {
-        const npi = await generateNutritionPanel();
-        if (!npi) {
-          outputNPI.push("");
-          outputJSON.push("");
-          outputSource.push("");
-          continue;
-        }
-
-        const json = JSON.stringify({
-          type: "root",
-          children: [
-            {
-              type: "paragraph",
-              children: [{ type: "text", value: npi }],
-            },
-          ],
-        });
-
-        seenHandles[handle] = { npi, json, source: "OpenAI" };
-        outputNPI.push(npi);
-        outputJSON.push(json);
-        outputSource.push("OpenAI");
+        continue;
       }
+
+      console.log(`Generating nutrition panel for: ${title}`);
+      const npi = await generateNutritionPanel();
+      if (!npi) {
+        console.log("❌ Failed to generate NPI");
+        outputNPI.push("");
+        outputJSON.push("");
+        outputSource.push("");
+        continue;
+      }
+
+      console.log("✅ NPI generated:", npi);
+
+      const json = JSON.stringify({
+        type: "root",
+        children: [
+          {
+            type: "paragraph",
+            children: [{ type: "text", value: npi }],
+          },
+        ],
+      });
+
+      seenHandles[handle] = { npi, json, source: "OpenAI" };
+      outputNPI.push(npi);
+      outputJSON.push(json);
+      outputSource.push("OpenAI");
     }
 
     await writeNutritionPanels(startRow, outputNPI, outputJSON, outputSource);
@@ -172,7 +181,7 @@ app.get("/generate-nutrition-batch", async (req, res) => {
 
     res.send(`✅ Processed rows ${startRow} to ${startRow + rows.length - 1}`);
   } catch (error) {
-    console.error("❌ Error:", error.message);
+    console.error("❌ Error:", error);
     res.status(500).send("Failed to generate nutrition panels.");
   }
 });
