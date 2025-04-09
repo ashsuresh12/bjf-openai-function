@@ -9,7 +9,13 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = "Allergens";
-const BATCH_SIZE = 300;
+const BATCH_SIZE = 500;
+
+const APPROVED_ALLERGENS = [
+  "Wheat", "Fish", "Crustacean", "Mollusc", "Egg", "Milk", "Lupin", "Peanut",
+  "Soy", "Sesame", "Almond", "Brazil Nut", "Cashew", "Hazelnut", "Macadamia",
+  "Pecan", "Pistachio", "Pine Nut", "Walnut", "Barley", "Oats", "Rye", "Sulphites"
+];
 
 const auth = new GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
@@ -50,26 +56,37 @@ async function fetchBatch(startRow, endRow) {
   return res.data.values || [];
 }
 
-async function writeAllergens(startRow, values) {
+async function writeAllergenColumns(startRow, rowsOfAllergens) {
   const sheets = await getSheetsClient();
-  const range = `${SHEET_NAME}!D${startRow}:D${startRow + values.length - 1}`;
+  const range = `${SHEET_NAME}!D${startRow}:Z${startRow + rowsOfAllergens.length - 1}`;
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range,
     valueInputOption: "RAW",
-    requestBody: { values: values.map(val => [val]) },
+    requestBody: { values: rowsOfAllergens },
   });
 }
 
-async function generateAllergens(title, description) {
-  const prompt = `List any common allergens that might be present in this food product: "${title}". Base your answer on typical ingredients and cross-contamination risks. Only list known allergens such as: Gluten, Soy, Dairy, Eggs, Tree Nuts, Peanuts, Sesame, Sulphites, Fish, Shellfish. Separate multiple allergens with commas. If no common allergens apply, return "None". Be concise.`;
+function normaliseAllergen(term) {
+  const lower = term.toLowerCase();
+  if (["soy", "soya", "soybean"].includes(lower)) return "Soy";
+  return APPROVED_ALLERGENS.find(
+    a => a.toLowerCase() === lower || lower.includes(a.toLowerCase())
+  );
+}
+
+async function generateAllergenList(title, description) {
+  const prompt = `List any of the following allergens that may apply to this food product: ${APPROVED_ALLERGENS.join(", ")}. 
+Title: "${title}". 
+Return only the allergen names, comma-separated, based on typical ingredients or cross-contamination risk. If none apply, return "None".`;
 
   const payload = {
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: "You are a food labeling expert. Only provide accurate, concise allergen lists for consumers, using comma-separated terms and 'None' where applicable.",
+        content:
+          "You are a food labeling expert. Return only valid allergens from a predefined list. Comma-separated, no extra commentary.",
       },
       {
         role: "user",
@@ -92,10 +109,14 @@ async function generateAllergens(title, description) {
       }
     );
 
-    return response.data.choices[0].message.content.trim();
+    const raw = response.data.choices[0].message.content.trim();
+    if (raw.toLowerCase().startsWith("none")) return [];
+
+    const parsed = raw.split(",").map(a => normaliseAllergen(a.trim())).filter(Boolean);
+    return [...new Set(parsed)];
   } catch (error) {
     console.error("OpenAI error:", error.message);
-    return "Error";
+    return [];
   }
 }
 
@@ -116,7 +137,7 @@ app.get("/generate-allergen-batch", async (req, res) => {
       const [handle, title, description] = data[i];
 
       if (!handle) {
-        output.push("None");
+        output.push([""]);
         continue;
       }
 
@@ -124,14 +145,15 @@ app.get("/generate-allergen-batch", async (req, res) => {
         output.push(seenHandles[handle]);
       } else {
         console.log("🔍 Checking allergens for:", title);
-        const allergens = await generateAllergens(title, description);
+        const allergens = await generateAllergenList(title, description);
         seenHandles[handle] = allergens;
         output.push(allergens);
       }
     }
 
-    await writeAllergens(startRow, output);
+    await writeAllergenColumns(startRow, output);
     await updateLastProcessedRow(startRow + output.length);
+
     res.send(`✅ Processed rows ${startRow} to ${startRow + output.length - 1}`);
   } catch (error) {
     console.error("❌ Error:", error.message);
@@ -145,5 +167,5 @@ app.get("/reset-allergens", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🟢 Allergen batch service running on port ${PORT}`);
+  console.log(`🟢 Allergen column batch service running on port ${PORT}`);
 });
