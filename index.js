@@ -11,11 +11,32 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = "Allergens";
 const BATCH_SIZE = 500;
 
-const APPROVED_ALLERGENS = [
-  "Wheat", "Fish", "Crustacean", "Mollusc", "Egg", "Milk", "Lupin", "Peanut",
-  "Soy", "Sesame", "Almond", "Brazil Nut", "Cashew", "Hazelnut", "Macadamia",
-  "Pecan", "Pistachio", "Pine Nut", "Walnut", "Barley", "Oats", "Rye", "Sulphites"
-];
+const ALLERGENS = {
+  "Wheat": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/wheat-256.png?v=1744181466",
+  "Fish": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/fish-256.png?v=1741856283",
+  "Crustacean": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/crustaceans-256.png?v=1741856282",
+  "Mollusc": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/molluscs-256.png?v=1741856282",
+  "Egg": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/eggs-256.png?v=1741856282",
+  "Milk": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/milk-256.png?v=1741856282",
+  "Lupin": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/lupin-256.png?v=1741856282",
+  "Peanut": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/peanuts-256.png?v=1741856282",
+  "Soy": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/soya-256.png?v=1741856282",
+  "Sesame": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/seasame-256.png?v=1741856282",
+  "Almond": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
+  "Brazil Nut": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
+  "Cashew": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
+  "Hazelnut": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
+  "Macadamia": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
+  "Pecan": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
+  "Pistachio": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
+  "Pine Nut": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
+  "Walnut": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
+  "Barley": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/wheat-256.png?v=1744181466",
+  "Oats": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/wheat-256.png?v=1744181466",
+  "Rye": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/wheat-256.png?v=1744181466",
+  "Sulphites": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/sulphites-256.png?v=1741856282",
+  "Gluten": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/gluten-256.png?v=1741856282"
+};
 
 const auth = new GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
@@ -58,7 +79,7 @@ async function fetchBatch(startRow, endRow) {
 
 async function writeAllergenColumns(startRow, rowsOfAllergens) {
   const sheets = await getSheetsClient();
-  const range = `${SHEET_NAME}!D${startRow}:Z${startRow + rowsOfAllergens.length - 1}`;
+  const range = `${SHEET_NAME}!D${startRow}:ZZ${startRow + rowsOfAllergens.length - 1}`;
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range,
@@ -70,23 +91,23 @@ async function writeAllergenColumns(startRow, rowsOfAllergens) {
 function normaliseAllergen(term) {
   const lower = term.toLowerCase();
   if (["soy", "soya", "soybean"].includes(lower)) return "Soy";
-  return APPROVED_ALLERGENS.find(
+  const match = Object.keys(ALLERGENS).find(
     a => a.toLowerCase() === lower || lower.includes(a.toLowerCase())
   );
+  return match || null;
 }
 
 async function generateAllergenList(title, description) {
-  const prompt = `List any of the following allergens that may apply to this food product: ${APPROVED_ALLERGENS.join(", ")}. 
+  const prompt = `List any of the following allergens that may apply to this food product: ${Object.keys(ALLERGENS).join(", ")}. 
 Title: "${title}". 
-Return only the allergen names, comma-separated, based on typical ingredients or cross-contamination risk. If none apply, return "None".`;
+Return only the allergen names, comma-separated. If none apply, return "None".`;
 
   const payload = {
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content:
-          "You are a food labeling expert. Return only valid allergens from a predefined list. Comma-separated, no extra commentary.",
+        content: "Return valid allergens only from a predefined list. Comma-separated. No commentary.",
       },
       {
         role: "user",
@@ -112,7 +133,11 @@ Return only the allergen names, comma-separated, based on typical ingredients or
     const raw = response.data.choices[0].message.content.trim();
     if (raw.toLowerCase().startsWith("none")) return [];
 
-    const parsed = raw.split(",").map(a => normaliseAllergen(a.trim())).filter(Boolean);
+    const parsed = raw
+      .split(",")
+      .map(a => normaliseAllergen(a.trim()))
+      .filter(Boolean);
+
     return [...new Set(parsed)];
   } catch (error) {
     console.error("OpenAI error:", error.message);
@@ -146,14 +171,20 @@ app.get("/generate-allergen-batch", async (req, res) => {
       } else {
         console.log("🔍 Checking allergens for:", title);
         const allergens = await generateAllergenList(title, description);
-        seenHandles[handle] = allergens;
-        output.push(allergens);
+        const structured = [];
+
+        allergens.forEach(allergen => {
+          structured.push(allergen);
+          structured.push(ALLERGENS[allergen] || "");
+        });
+
+        seenHandles[handle] = structured;
+        output.push(structured);
       }
     }
 
     await writeAllergenColumns(startRow, output);
     await updateLastProcessedRow(startRow + output.length);
-
     res.send(`✅ Processed rows ${startRow} to ${startRow + output.length - 1}`);
   } catch (error) {
     console.error("❌ Error:", error.message);
@@ -167,5 +198,5 @@ app.get("/reset-allergens", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🟢 Allergen column batch service running on port ${PORT}`);
+  console.log(`🟢 Allergen icon+label batch service running on port ${PORT}`);
 });
