@@ -8,35 +8,8 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME = "Allergens";
-const BATCH_SIZE = 500;
-
-const ALLERGENS = {
-  "Wheat": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/wheat-256.png?v=1744181466",
-  "Fish": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/fish-256.png?v=1741856283",
-  "Crustacean": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/crustaceans-256.png?v=1741856282",
-  "Mollusc": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/molluscs-256.png?v=1741856282",
-  "Egg": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/eggs-256.png?v=1741856282",
-  "Milk": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/milk-256.png?v=1741856282",
-  "Lupin": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/lupin-256.png?v=1741856282",
-  "Peanut": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/peanuts-256.png?v=1741856282",
-  "Soy": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/soya-256.png?v=1741856282",
-  "Sesame": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/seasame-256.png?v=1741856282",
-  "Almond": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
-  "Brazil Nut": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
-  "Cashew": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
-  "Hazelnut": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
-  "Macadamia": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
-  "Pecan": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
-  "Pistachio": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
-  "Pine Nut": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
-  "Walnut": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/nuts-256.png?v=1741856282",
-  "Barley": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/wheat-256.png?v=1744181466",
-  "Oats": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/wheat-256.png?v=1744181466",
-  "Rye": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/wheat-256.png?v=1744181466",
-  "Sulphites": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/sulphites-256.png?v=1741856282",
-  "Gluten": "https://cdn.shopify.com/s/files/1/0474/3446/5442/files/gluten-256.png?v=1741856282"
-};
+const SHEET_NAME = "NPI";
+const BATCH_SIZE = 100;
 
 const auth = new GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
@@ -52,16 +25,16 @@ async function getLastProcessedRow() {
   const sheets = await getSheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!F1`,
+    range: `${SHEET_NAME}!H1`,
   });
-  return parseInt(res.data.values?.[0]?.[0] || "1", 10);
+  return parseInt(res.data.values?.[0]?.[0] || "2", 10);
 }
 
 async function updateLastProcessedRow(row) {
   const sheets = await getSheetsClient();
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!F1`,
+    range: `${SHEET_NAME}!H1`,
     valueInputOption: "RAW",
     requestBody: { values: [[row]] },
   });
@@ -69,7 +42,7 @@ async function updateLastProcessedRow(row) {
 
 async function fetchBatch(startRow, endRow) {
   const sheets = await getSheetsClient();
-  const range = `${SHEET_NAME}!A${startRow}:C${endRow}`;
+  const range = `${SHEET_NAME}!A${startRow}:D${endRow}`;
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range,
@@ -77,45 +50,49 @@ async function fetchBatch(startRow, endRow) {
   return res.data.values || [];
 }
 
-async function writeAllergenColumns(startRow, rowsOfAllergens) {
+async function writeNutritionPanels(startRow, npis, jsons, sources) {
   const sheets = await getSheetsClient();
-  const range = `${SHEET_NAME}!D${startRow}:ZZ${startRow + rowsOfAllergens.length - 1}`;
+
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
-    range,
+    range: `${SHEET_NAME}!E${startRow}:E${startRow + npis.length - 1}`,
     valueInputOption: "RAW",
-    requestBody: { values: rowsOfAllergens },
+    requestBody: { values: npis.map(v => [v]) },
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!F${startRow}:F${startRow + jsons.length - 1}`,
+    valueInputOption: "RAW",
+    requestBody: { values: jsons.map(v => [v]) },
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!G${startRow}:G${startRow + sources.length - 1}`,
+    valueInputOption: "RAW",
+    requestBody: { values: sources.map(v => [v]) },
   });
 }
 
-function normaliseAllergen(term) {
-  const lower = term.toLowerCase();
-  if (["soy", "soya", "soybean"].includes(lower)) return "Soy";
-  const match = Object.keys(ALLERGENS).find(
-    a => a.toLowerCase() === lower || lower.includes(a.toLowerCase())
-  );
-  return match || null;
-}
-
-async function generateAllergenList(title, description) {
-  const prompt = `List any of the following allergens that may apply to this food product: ${Object.keys(ALLERGENS).join(", ")}. 
-Title: "${title}". 
-Return only the allergen names, comma-separated. If none apply, return "None".`;
+async function generateNutritionPanel() {
+  const prompt = `Return a nutrition panel in the following format only (no extra text):\n\nEnergy, 3700 kJ\n Protein, 0 g \n Fat, total, 100 g \n - Saturated, 14 g \n - Monounsaturated, 73 g \n - Polyunsaturated, 11 g \n Carbohydrate, 0 g`;
 
   const payload = {
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: "Return valid allergens only from a predefined list. Comma-separated. No commentary.",
+        content:
+          "You are an expert at generating clear and structured nutritional panels for food products. Return only the structured panel text in the exact format provided. Do not include any additional comments or explanation.",
       },
       {
         role: "user",
         content: prompt,
       },
     ],
-    temperature: 0.3,
-    max_tokens: 100,
+    temperature: 0.2,
+    max_tokens: 250,
   };
 
   try {
@@ -130,73 +107,81 @@ Return only the allergen names, comma-separated. If none apply, return "None".`;
       }
     );
 
-    const raw = response.data.choices[0].message.content.trim();
-    if (raw.toLowerCase().startsWith("none")) return [];
-
-    const parsed = raw
-      .split(",")
-      .map(a => normaliseAllergen(a.trim()))
-      .filter(Boolean);
-
-    return [...new Set(parsed)];
+    return response.data.choices[0].message.content.trim();
   } catch (error) {
     console.error("OpenAI error:", error.message);
-    return [];
+    return null;
   }
 }
 
-app.get("/generate-allergen-batch", async (req, res) => {
+app.get("/generate-nutrition-batch", async (req, res) => {
   try {
     const startRow = await getLastProcessedRow();
     const endRow = startRow + BATCH_SIZE - 1;
-
-    const data = await fetchBatch(startRow, endRow);
-    if (data.length === 0) {
-      return res.send("✅ All rows processed.");
-    }
+    const rows = await fetchBatch(startRow, endRow);
+    if (rows.length === 0) return res.send("✅ All rows processed.");
 
     const seenHandles = {};
-    const output = [];
+    const outputNPI = [], outputJSON = [], outputSource = [];
 
-    for (let i = 0; i < data.length; i++) {
-      const [handle, title, description] = data[i];
+    for (let i = 0; i < rows.length; i++) {
+      const [handle = "", title = "", desc = "", tags = ""] = rows[i];
 
-      if (!handle) {
-        output.push([""]);
+      const isFood = /\b(food|snack|drink|beverage|pantry|baking|oil|condiment|sauce|spice|dairy|meat|frozen|chilled|grocery|breakfast|grain|protein|sweet|savoury|spread)\b/i.test(tags);
+
+      if (!isFood || !handle) {
+        outputNPI.push("");
+        outputJSON.push("");
+        outputSource.push("");
         continue;
       }
 
       if (seenHandles[handle]) {
-        output.push(seenHandles[handle]);
+        const { npi, json, source } = seenHandles[handle];
+        outputNPI.push(npi);
+        outputJSON.push(json);
+        outputSource.push(source);
       } else {
-        console.log("🔍 Checking allergens for:", title);
-        const allergens = await generateAllergenList(title, description);
-        const structured = [];
+        const npi = await generateNutritionPanel();
+        if (!npi) {
+          outputNPI.push("");
+          outputJSON.push("");
+          outputSource.push("");
+          continue;
+        }
 
-        allergens.forEach(allergen => {
-          structured.push(allergen);
-          structured.push(ALLERGENS[allergen] || "");
+        const json = JSON.stringify({
+          type: "root",
+          children: [
+            {
+              type: "paragraph",
+              children: [{ type: "text", value: npi }],
+            },
+          ],
         });
 
-        seenHandles[handle] = structured;
-        output.push(structured);
+        seenHandles[handle] = { npi, json, source: "OpenAI" };
+        outputNPI.push(npi);
+        outputJSON.push(json);
+        outputSource.push("OpenAI");
       }
     }
 
-    await writeAllergenColumns(startRow, output);
-    await updateLastProcessedRow(startRow + output.length);
-    res.send(`✅ Processed rows ${startRow} to ${startRow + output.length - 1}`);
+    await writeNutritionPanels(startRow, outputNPI, outputJSON, outputSource);
+    await updateLastProcessedRow(startRow + rows.length);
+
+    res.send(`✅ Processed rows ${startRow} to ${startRow + rows.length - 1}`);
   } catch (error) {
     console.error("❌ Error:", error.message);
-    res.status(500).send("Failed to generate allergens.");
+    res.status(500).send("Failed to generate nutrition panels.");
   }
 });
 
-app.get("/reset-allergens", async (req, res) => {
-  await updateLastProcessedRow(1);
-  res.send("✅ Allergen batch pointer reset to row 2.");
+app.get("/reset-nutrition", async (req, res) => {
+  await updateLastProcessedRow(2);
+  res.send("✅ Nutrition batch pointer reset to row 2.");
 });
 
 app.listen(PORT, () => {
-  console.log(`🟢 Allergen icon+label batch service running on port ${PORT}`);
+  console.log(`🟢 Nutrition batch service running on port ${PORT}`);
 });
