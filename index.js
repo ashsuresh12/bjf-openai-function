@@ -8,7 +8,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME = "Storage";
+const SHEET_NAME = "Allergens";
 const BATCH_SIZE = 300;
 
 const auth = new GoogleAuth({
@@ -50,7 +50,7 @@ async function fetchBatch(startRow, endRow) {
   return res.data.values || [];
 }
 
-async function writeStorageInstructions(startRow, values) {
+async function writeAllergens(startRow, values) {
   const sheets = await getSheetsClient();
   const range = `${SHEET_NAME}!D${startRow}:D${startRow + values.length - 1}`;
   await sheets.spreadsheets.values.update({
@@ -61,23 +61,23 @@ async function writeStorageInstructions(startRow, values) {
   });
 }
 
-async function generateInstruction(title, description) {
-  const prompt = `Write concise storage instructions suitable for an eCommerce product page. Do not mention the product name. Only include practical advice, such as “Store in a cool, dry place,” or “Keep tightly sealed.” Do not say things like “Use within recommended timeframe on packaging.” Keep it under 30 words.`;
+async function generateAllergens(title, description) {
+  const prompt = `List any common allergens that might be present in this food product: "${title}". Base your answer on typical ingredients and cross-contamination risks. Only list known allergens such as: Gluten, Soy, Dairy, Eggs, Tree Nuts, Peanuts, Sesame, Sulphites, Fish, Shellfish. Separate multiple allergens with commas. If no common allergens apply, return "None". Be concise.`;
 
   const payload = {
     model: "gpt-4o",
     messages: [
       {
         role: "system",
-        content: "You are an expert at writing clean, concise storage instructions for product listings. Keep it practical and omit product names or general packaging advice.",
+        content: "You are a food labeling expert. Only provide accurate, concise allergen lists for consumers, using comma-separated terms and 'None' where applicable.",
       },
       {
         role: "user",
         content: prompt,
       },
     ],
-    temperature: 0.4,
-    max_tokens: 150,
+    temperature: 0.3,
+    max_tokens: 100,
   };
 
   try {
@@ -95,11 +95,11 @@ async function generateInstruction(title, description) {
     return response.data.choices[0].message.content.trim();
   } catch (error) {
     console.error("OpenAI error:", error.message);
-    return "Storage instructions unavailable.";
+    return "Error";
   }
 }
 
-app.get("/generate-storage-batch", async (req, res) => {
+app.get("/generate-allergen-batch", async (req, res) => {
   try {
     const startRow = await getLastProcessedRow();
     const endRow = startRow + BATCH_SIZE - 1;
@@ -113,41 +113,37 @@ app.get("/generate-storage-batch", async (req, res) => {
     const output = [];
 
     for (let i = 0; i < data.length; i++) {
-      const row = data[i];
-      const handle = row[0] || "";
-      const title = row[1] || "";
-      const desc = row[2] || "";
+      const [handle, title, description] = data[i];
 
       if (!handle) {
-        output.push("");
+        output.push("None");
         continue;
       }
 
       if (seenHandles[handle]) {
         output.push(seenHandles[handle]);
       } else {
-        console.log("🗃️ Generating storage for:", title);
-        const instruction = await generateInstruction(title, desc);
-        seenHandles[handle] = instruction;
-        output.push(instruction);
+        console.log("🔍 Checking allergens for:", title);
+        const allergens = await generateAllergens(title, description);
+        seenHandles[handle] = allergens;
+        output.push(allergens);
       }
     }
 
-    await writeStorageInstructions(startRow, output);
+    await writeAllergens(startRow, output);
     await updateLastProcessedRow(startRow + output.length);
-
     res.send(`✅ Processed rows ${startRow} to ${startRow + output.length - 1}`);
   } catch (error) {
     console.error("❌ Error:", error.message);
-    res.status(500).send("Failed to generate storage instructions.");
+    res.status(500).send("Failed to generate allergens.");
   }
 });
 
-app.get("/reset-storage", async (req, res) => {
+app.get("/reset-allergens", async (req, res) => {
   await updateLastProcessedRow(1);
-  res.send("✅ Storage batch pointer reset to row 2.");
+  res.send("✅ Allergen batch pointer reset to row 2.");
 });
 
 app.listen(PORT, () => {
-  console.log(`🟢 Storage batch service running on port ${PORT}`);
+  console.log(`🟢 Allergen batch service running on port ${PORT}`);
 });
