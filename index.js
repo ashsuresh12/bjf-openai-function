@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = "NPI";
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 500;
 
 const auth = new GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
