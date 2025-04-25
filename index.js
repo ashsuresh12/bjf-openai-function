@@ -1,3 +1,17 @@
+import express from 'express';
+import dotenv from 'dotenv';
+import { getCell, setCell, getRows, batchUpdate } from './sheets.js';
+import axios from 'axios';
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('NutriScore Service Running ✅');
+});
+
 app.get('/generate-nutriscore-batch', async (req, res) => {
   const sheetName = 'Upload2NS';
   const trackingCell = 'AZ1';
@@ -36,12 +50,21 @@ NutriScore: [A-E]
 Explanation: [1–2 sentence explanation]
       `;
 
-      const result = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: prompt }],
-      });
+      const result = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          model: 'gpt-4o',
+          messages: [{ role: 'user', content: prompt }],
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          },
+        }
+      );
 
-      const output = result.choices?.[0]?.message?.content || '';
+      const output = result.data.choices?.[0]?.message?.content || '';
       const match = output.match(/NutriScore:\s*([A-E])[\s\S]*?Explanation:\s*(.*)/i);
 
       if (match) {
@@ -60,4 +83,8 @@ Explanation: [1–2 sentence explanation]
     console.error('❌ NutriScore error:', error.message);
     res.status(500).send('Failed to generate NutriScore batch.');
   }
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
