@@ -1,7 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import { getCell, setCell, getRows, batchUpdate } from './sheets.js';
 import axios from 'axios';
+import { getCell, setCell, getRows, batchUpdate } from './sheets.js';
 
 dotenv.config();
 
