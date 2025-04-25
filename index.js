@@ -14,10 +14,10 @@ app.get('/generate-nutriscore-batch', async (req, res) => {
     for (let i = 0; i < data.length; i++) {
       const row = currentRow + i;
       const [handle, description] = data[i];
+
       if (!handle) continue;
 
       if (handleMap.has(handle)) {
-        // Reuse existing score/explanation for same handle
         const { score, explanation } = handleMap.get(handle);
         updates.push({ row, values: [score, explanation] });
         continue;
