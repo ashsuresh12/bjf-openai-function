@@ -1,56 +1,64 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import axios from 'axios';
-import { getCell, setCell, getRows, batchUpdate } from './sheets.js';
+import { getRows, batchUpdate } from './sheets.js';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+const sheetName = 'Copy of Sheet24';
+const batchSize = 669; // Full sheet
+const startRow = 2;
+
+const DIET_TAGS = [
+  'Vegan',
+  'Vegetarian',
+  'Plant Based',
+  'High Protein',
+  'Low Carb',
+  'Keto Friendly',
+  'Gluten Free',
+  'Dairy Free',
+  'Nut Free',
+  'Soy Free',
+  'Organic',
+  'Non GMO'
+];
+
 app.get('/', (req, res) => {
-  res.send('NutriScore Service Running ✅');
+  res.send('✅ Diet Tagging Service is live.<br><br>Use <code>/generate-diet-tags</code> to start tagging.');
 });
 
-app.get('/generate-nutriscore-batch', async (req, res) => {
-  const sheetName = 'Upload2NS';
-  const trackingCell = 'AZ1';
-  const batchSize = 200;
-
+app.get('/generate-diet-tags', async (req, res) => {
   try {
-    const currentRow = parseInt(await getCell(sheetName, trackingCell)) || 2;
-    const endRow = currentRow + batchSize - 1;
+    const data = await getRows(sheetName, startRow, startRow + batchSize - 1, ['B', 'C', 'AV']);
 
-    const data = await getRows(sheetName, currentRow, endRow, ['A', 'B']); // A: Handle, B: Description
-    const updates = [];
-    const handleMap = new Map();
+    const updatesAY = [];
+    const updatesAZ = [];
 
     for (let i = 0; i < data.length; i++) {
-      const row = currentRow + i;
-      const [handle, description] = data[i];
+      const rowNum = startRow + i;
+      const [title, description, ingredients] = data[i];
 
-      if (!handle) continue;
-
-      if (handleMap.has(handle)) {
-        const { score, explanation } = handleMap.get(handle);
-        updates.push({ row, values: [score, explanation] });
-        continue;
-      }
+      if (!title && !description && !ingredients) continue;
 
       const prompt = `
-You're a nutrition labelling expert.
+You are a dietary compliance assistant for a whole foods retailer. Based on the product title, description, and ingredients below, identify which of the following diets apply:
 
-Give a NutriScore for the following food product, using the A to E system (A = healthiest, E = least healthy). Then write a tactful explanation that highlights any positive attributes without calling the food unhealthy, even if it's a lower score.
+${DIET_TAGS.join(', ')}
 
-Product Handle: ${handle}
-Product Description: ${description || '[No description provided]'}
+Respond with two fields:
+1. **Tags**: A comma-separated list of applicable diets using the exact wording above (e.g. Vegan, Gluten Free). Do not hyphenate.
+2. **Rationale**: A brief justification, citing keywords, claims, or ingredient exclusions that support the tag selections.
 
-Respond in the following format:
-NutriScore: [A-E]
-Explanation: [1–2 sentence explanation]
-      `;
+Product Title: ${title}
+Product Description: ${description}
+Ingredients: ${ingredients}
+`;
 
-      const result = await axios.post(
+      const response = await axios.post(
         'https://api.openai.com/v1/chat/completions',
         {
           model: 'gpt-4o',
@@ -58,33 +66,34 @@ Explanation: [1–2 sentence explanation]
         },
         {
           headers: {
+            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           },
         }
       );
 
-      const output = result.data.choices?.[0]?.message?.content || '';
-      const match = output.match(/NutriScore:\s*([A-E])[\s\S]*?Explanation:\s*(.*)/i);
+      const content = response.data.choices[0].message.content;
+      const tagMatch = content.match(/\*\*Tags\*\*:\s*(.+)/i);
+      const rationaleMatch = content.match(/\*\*Rationale\*\*:\s*(.+)/i);
 
-      if (match) {
-        const score = match[1].toUpperCase();
-        const explanation = match[2].trim();
-        handleMap.set(handle, { score, explanation });
-        updates.push({ row, values: [score, explanation] });
-      }
+      const tags = tagMatch ? tagMatch[1].trim() : '';
+      const rationale = rationaleMatch ? rationaleMatch[1].trim() : '';
+
+      updatesAY.push({ row: rowNum, values: [tags] });
+      updatesAZ.push({ row: rowNum, values: [rationale] });
     }
 
-    await batchUpdate(sheetName, updates, ['AD', 'AE']);
-    await setCell(sheetName, trackingCell, endRow + 1);
+    await batchUpdate(sheetName, updatesAY, ['AY']);
+    await batchUpdate(sheetName, updatesAZ, ['AZ']);
 
-    res.send(`✅ NutriScore batch processed. Rows ${currentRow} to ${endRow}.`);
-  } catch (error) {
-    console.error('❌ NutriScore error:', error.message);
-    res.status(500).send('Failed to generate NutriScore batch.');
+    res.send(`✅ Diet tags and rationale updated for ${updatesAY.length} rows in "${sheetName}".`);
+  } catch (err) {
+    console.error('❌ Error:', err.message);
+    res.status(500).send('Failed to generate diet tags.');
   }
 });
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🔗 Endpoint: http://localhost:${PORT}/generate-diet-tags`);
 });

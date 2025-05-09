@@ -1,5 +1,5 @@
 {
-  "name": "bjf-openai-nutriscore",
+  "name": "bjf-storage-batch",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
