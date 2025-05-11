@@ -4,42 +4,23 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// 🛡️ Load credentials from environment variable
-const rawCredentials = process.env.GOOGLE_CREDENTIALS_JSON;
-if (!rawCredentials) {
-  throw new Error('❌ GOOGLE_CREDENTIALS_JSON is not defined.');
-}
-
-const credentials = JSON.parse(rawCredentials);
+const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 
 const auth = new JWT({
-  email: credentials.client_email,
-  key: credentials.private_key,
-  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  email: process.env.GOOGLE_CLIENT_EMAIL,
+  key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  scopes: SCOPES,
 });
 
 const sheets = google.sheets({ version: 'v4', auth });
-const spreadsheetId = process.env.SPREADSHEET_ID;
+const spreadsheetId = process.env.GOOGLE_SHEET_ID;
 
-export async function getRows(sheetName, startRow, endRow, columns) {
-  const range = `${sheetName}!${columns[0]}${startRow}:${columns[columns.length - 1]}${endRow}`;
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  return res.data.values || [];
-}
-
-export async function batchUpdate(sheetName, updates, targetColumns) {
-  const data = updates.map(({ row, values }) => ({
-    range: `${sheetName}!${targetColumns[0]}${row}:${targetColumns[targetColumns.length - 1]}${row}`,
-    values: [values.map(v => v || '')],
-  }));
-
-  await sheets.spreadsheets.values.batchUpdate({
+export async function getCell(sheetName, cell) {
+  const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    requestBody: {
-      valueInputOption: 'RAW',
-      data,
-    },
+    range: `${sheetName}!${cell}`,
   });
+  return res.data.values?.[0]?.[0] || '';
 }
 
 export async function setCell(sheetName, cell, value) {
@@ -47,8 +28,32 @@ export async function setCell(sheetName, cell, value) {
     spreadsheetId,
     range: `${sheetName}!${cell}`,
     valueInputOption: 'RAW',
+    requestBody: { values: [[value]] },
+  });
+}
+
+export async function getRows(sheetName, startRow, endRow, columns) {
+  const range = `${sheetName}!${columns[0]}${startRow}:${columns[columns.length - 1]}${endRow}`;
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range,
+  });
+  return res.data.values || [];
+}
+
+export async function batchUpdate(sheetName, updates, targetColumns) {
+  const data = updates.map(({ row, values }) => {
+    return {
+      range: `${sheetName}!${targetColumns[0]}${row}:${targetColumns[targetColumns.length - 1]}${row}`,
+      values: [values.map((val) => val || '')],
+    };
+  });
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
     requestBody: {
-      values: [[value]],
+      valueInputOption: 'RAW',
+      data,
     },
   });
 }
