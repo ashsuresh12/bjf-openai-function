@@ -1,42 +1,14 @@
-import express from 'express';
-import dotenv from 'dotenv';
-import axios from 'axios';
-import { getRows, batchUpdate } from './sheets.js';
+app.get('/generate-diet-tags-23', async (req, res) => {
+  const sheetName = 'Copy of Sheet23';
+  const startRow = 2;
+  const batchSize = 669;
 
-dotenv.config();
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-const sheetName = 'Copy of Sheet24';
-const batchSize = 669; // Full sheet
-const startRow = 2;
-
-const DIET_TAGS = [
-  'Vegan',
-  'Vegetarian',
-  'Plant Based',
-  'High Protein',
-  'Low Carb',
-  'Keto Friendly',
-  'Gluten Free',
-  'Dairy Free',
-  'Nut Free',
-  'Soy Free',
-  'Organic',
-  'Non GMO'
-];
-
-app.get('/', (req, res) => {
-  res.send('✅ Diet Tagging Service is live.<br><br>Use <code>/generate-diet-tags</code> to start tagging.');
-});
-
-app.get('/generate-diet-tags', async (req, res) => {
   try {
-    const data = await getRows(sheetName, startRow, startRow + batchSize - 1, ['B', 'C', 'AV']);
+    // B = Title (2), C = Description (3), AO = Ingredients (41)
+    const data = await getRows(sheetName, startRow, startRow + batchSize - 1, ['B', 'C', 'AO']);
 
-    const updatesAY = [];
-    const updatesAZ = [];
+    const updatesAR = []; // Tags → Column AR (44)
+    const updatesAS = []; // Rationale → Column AS (45)
 
     for (let i = 0; i < data.length; i++) {
       const rowNum = startRow + i;
@@ -47,7 +19,7 @@ app.get('/generate-diet-tags', async (req, res) => {
       const prompt = `
 You are a dietary compliance assistant for a whole foods retailer. Based on the product title, description, and ingredients below, identify which of the following diets apply:
 
-${DIET_TAGS.join(', ')}
+Vegan, Vegetarian, Plant Based, High Protein, Low Carb, Keto Friendly, Gluten Free, Dairy Free, Nut Free, Soy Free, Organic, Non GMO
 
 Respond with two fields:
 1. **Tags**: A comma-separated list of applicable diets using the exact wording above (e.g. Vegan, Gluten Free). Do not hyphenate.
@@ -79,21 +51,16 @@ Ingredients: ${ingredients}
       const tags = tagMatch ? tagMatch[1].trim() : '';
       const rationale = rationaleMatch ? rationaleMatch[1].trim() : '';
 
-      updatesAY.push({ row: rowNum, values: [tags] });
-      updatesAZ.push({ row: rowNum, values: [rationale] });
+      updatesAR.push({ row: rowNum, values: [tags] });
+      updatesAS.push({ row: rowNum, values: [rationale] });
     }
 
-    await batchUpdate(sheetName, updatesAY, ['AY']);
-    await batchUpdate(sheetName, updatesAZ, ['AZ']);
+    await batchUpdate(sheetName, updatesAR, ['AR']);
+    await batchUpdate(sheetName, updatesAS, ['AS']);
 
-    res.send(`✅ Diet tags and rationale updated for ${updatesAY.length} rows in "${sheetName}".`);
+    res.send(`✅ Diet tags and rationale updated for ${updatesAR.length} rows in "${sheetName}".`);
   } catch (err) {
-    console.error('❌ Error:', err.message);
-    res.status(500).send('Failed to generate diet tags.');
+    console.error('❌ Error in /generate-diet-tags-23:', err.message);
+    res.status(500).send('Failed to generate diet tags for Sheet23.');
   }
-});
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🔗 Endpoint: http://localhost:${PORT}/generate-diet-tags`);
 });
