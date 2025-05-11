@@ -4,16 +4,16 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
 
 const auth = new JWT({
-  email: process.env.GOOGLE_CLIENT_EMAIL,
-  key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-  scopes: SCOPES,
+  email: credentials.client_email,
+  key: credentials.private_key,
+  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
 const sheets = google.sheets({ version: 'v4', auth });
-const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+const spreadsheetId = process.env.SPREADSHEET_ID;
 
 export async function getCell(sheetName, cell) {
   const res = await sheets.spreadsheets.values.get({
