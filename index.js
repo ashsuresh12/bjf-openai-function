@@ -6,10 +6,10 @@ import { OpenAI } from 'openai';
 dotenv.config();
 const app = express();
 const BATCH_SIZE = 400;
-const SHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = 'NewTagging';
 const TRACKER_CELL = 'Z1';
 const OUTPUT_COLUMN = 'H';
+const SHEET_ID = process.env.SPREADSHEET_ID;
 
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
 const auth = new google.auth.JWT(
@@ -27,10 +27,13 @@ async function getLastProcessedRow() {
     spreadsheetId: SHEET_ID,
     range: `${SHEET_NAME}!${TRACKER_CELL}`
   });
-  return parseInt(res.data.values?.[0]?.[0] || '2', 10);
+  const row = parseInt(res.data.values?.[0]?.[0] || '2', 10);
+  console.log('Start row from Z1:', row);
+  return row;
 }
 
 async function updateProgress(row) {
+  console.log('Updating progress tracker to row:', row);
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range: `${SHEET_NAME}!${TRACKER_CELL}`,
@@ -41,10 +44,12 @@ async function updateProgress(row) {
 
 async function getSheetData(startRow, numRows) {
   const range = `${SHEET_NAME}!A${startRow}:H${startRow + numRows}`;
+  console.log('Fetching range:', range);
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range
   });
+  console.log('Rows fetched:', res.data.values?.length || 0);
   return res.data.values || [];
 }
 
@@ -73,18 +78,26 @@ Description: ${description}
 Category: ${category}
 `;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.2
-  });
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2
+    });
 
-  return response.choices[0].message.content.trim();
+    const result = response.choices[0].message.content.trim();
+    console.log('Generated tags:', result);
+    return result;
+  } catch (error) {
+    console.error('OpenAI error:', error.response?.data || error.message || error);
+    throw error;
+  }
 }
 
 async function writeTags(startRow, updates) {
-  const values = updates.map(t => [t]);
+  const values = updates.map(tag => [tag]);
   const range = `${SHEET_NAME}!${OUTPUT_COLUMN}${startRow}`;
+  console.log('Writing tags to range:', range);
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range,
@@ -97,29 +110,39 @@ app.get('/generate-tags', async (req, res) => {
   try {
     const startRow = await getLastProcessedRow();
     const data = await getSheetData(startRow, BATCH_SIZE);
-    if (data.length === 0) return res.send('✅ No more data to process.');
+    if (data.length === 0) {
+      console.log('No more data to process.');
+      return res.send('✅ No more data to process.');
+    }
 
     const firstIndexes = getFirstVariantIndexes(data);
+    console.log('Found first variants at indexes:', firstIndexes);
+
     const tagPromises = firstIndexes.map(i => {
       const row = data[i];
-      return generateTags(row[1], row[2], row[4]);
+      const title = row[1] || '';
+      const description = row[2] || '';
+      const category = row[4] || '';
+      return generateTags(title, description, category);
     });
 
     const tagResults = await Promise.all(tagPromises);
-    const outputArray = data.map((row, i) => {
-      return firstIndexes.includes(i) ? tagResults.shift() : '';
-    });
+    const outputArray = data.map((_, i) => (
+      firstIndexes.includes(i) ? tagResults.shift() : ''
+    ));
 
     await writeTags(startRow, outputArray);
     await updateProgress(startRow + data.length);
+
+    console.log(`✅ Successfully processed ${data.length} rows`);
     res.send(`✅ Processed rows ${startRow} to ${startRow + data.length - 1}`);
   } catch (err) {
-    console.error('❌ Error in tag generation:', err);
+    console.error('❌ Error in tag generation:', err.response?.data || err.message || err);
     res.status(500).send('❌ Failed to generate tags');
   }
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🚀 Tag generator live on port ${PORT}`);
+  console.log(`🚀 Tag generator running on port ${PORT}`);
 });
