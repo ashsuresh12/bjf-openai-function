@@ -7,7 +7,7 @@ dotenv.config();
 const app = express();
 const BATCH_SIZE = 400;
 const SHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME = 'New Tagging';
+const SHEET_NAME = 'NewTagging';
 const TRACKER_CELL = 'Z1';
 const OUTPUT_COLUMN = 'H';
 
