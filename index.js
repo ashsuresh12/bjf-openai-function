@@ -1,162 +1,125 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import axios from 'axios';
-import { getRows, batchUpdate } from './sheets.js';
+import { google } from 'googleapis';
+import { OpenAI } from 'openai';
 
 dotenv.config();
-
 const app = express();
-const PORT = process.env.PORT || 3000;
+const BATCH_SIZE = 400;
+const SHEET_ID = process.env.SPREADSHEET_ID;
+const SHEET_NAME = 'New Tagging';
+const TRACKER_CELL = 'Z1';
+const OUTPUT_COLUMN = 'H';
 
-const batchSize = 1049; // Updated from 669
-const startRow = 2;
+const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+const auth = new google.auth.JWT(
+  credentials.client_email,
+  null,
+  credentials.private_key,
+  ['https://www.googleapis.com/auth/spreadsheets']
+);
+const sheets = google.sheets({ version: 'v4', auth });
 
-const DIET_TAGS = [
-  'Vegan',
-  'Vegetarian',
-  'Plant Based',
-  'High Protein',
-  'Low Carb',
-  'Keto Friendly',
-  'Gluten Free',
-  'Dairy Free',
-  'Nut Free',
-  'Soy Free',
-  'Organic',
-  'Non GMO'
-];
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-app.get('/', (req, res) => {
-  res.send('✅ Diet Tagging Service is live.<br><br>Use <code>/generate-diet-tags</code> or <code>/generate-diet-tags-23</code>.');
-});
+async function getLastProcessedRow() {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `${SHEET_NAME}!${TRACKER_CELL}`
+  });
+  return parseInt(res.data.values?.[0]?.[0] || '2', 10);
+}
 
-app.get('/generate-diet-tags', async (req, res) => {
-  const sheetName = 'Copy of Sheet24';
+async function updateProgress(row) {
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `${SHEET_NAME}!${TRACKER_CELL}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[row]] }
+  });
+}
 
-  try {
-    const data = await getRows(sheetName, startRow, startRow + batchSize - 1, ['B', 'C', 'AV']);
-    const updatesAY = [];
-    const updatesAZ = [];
+async function getSheetData(startRow, numRows) {
+  const range = `${SHEET_NAME}!A${startRow}:H${startRow + numRows}`;
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range
+  });
+  return res.data.values || [];
+}
 
-    for (let i = 0; i < data.length; i++) {
-      const rowNum = startRow + i;
-      const [title, description, ingredients] = data[i];
-      if (!title && !description && !ingredients) continue;
+function getFirstVariantIndexes(rows) {
+  const seen = new Set();
+  return rows.map((row, i) => {
+    const handle = row[0];
+    if (!seen.has(handle)) {
+      seen.add(handle);
+      return i;
+    }
+    return null;
+  }).filter(i => i !== null);
+}
 
-      const prompt = `
-You are a dietary compliance assistant for a whole foods retailer. Based on the product title, description, and ingredients below, identify which of the following diets apply:
+async function generateTags(title, description, category) {
+  const prompt = `
+You're a product classification expert for an online wholefoods retailer. Based on the following product details, assign the most relevant tags from this fixed list (no made-up tags):
 
-${DIET_TAGS.join(', ')}
+Pantry Staples, Baking Essentials, Wholefood Snacks, High Protein, Chocolate, Sweeteners & Syrups, Body & Beauty, Cleaning & Essential Oils, Easy Meals, Bulk Buys, Gluten-Free, Dairy-Free, Vegan, Vegetarian, Organic, Keto Friendly Low Carb, Nut-Free, Low Sugar, Soy-Free, Grain-Free, FODMAP-Friendly, AIP (Autoimmune Protocol), Gut Health, Energy & Focus, Immunity Support, Stress & Sleep, Women’s Wellness, Skin & Hair Health, Pregnancy & Postnatal, Mood Support, Fitness & Recovery, Herbal Teas, Coffee & Alternatives, Chai & Matcha, Kombucha & Kefir, Functional Beverages, Superfoods & Powders.
 
-Respond with two fields:
-1. **Tags**: A comma-separated list of applicable diets using the exact wording above (e.g. Vegan, Gluten Free). Do not hyphenate.
-2. **Rationale**: A brief justification, citing keywords, claims, or ingredient exclusions that support the tag selections.
+Respond only with a comma-separated list of appropriate tags.
 
-Product Title: ${title}
-Product Description: ${description}
-Ingredients: ${ingredients}
+Title: ${title}
+Description: ${description}
+Category: ${category}
 `;
 
-      const response = await axios.post(
-        'https://api.openai.com/v1/chat/completions',
-        {
-          model: 'gpt-4o',
-          messages: [{ role: 'user', content: prompt }],
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.2
+  });
 
-      const content = response.data.choices[0].message.content;
-      const tagMatch = content.match(/\*\*Tags\*\*:\s*(.+)/i);
-      const rationaleMatch = content.match(/\*\*Rationale\*\*:\s*(.+)/i);
+  return response.choices[0].message.content.trim();
+}
 
-      const tags = tagMatch ? tagMatch[1].trim() : '';
-      const rationale = rationaleMatch ? rationaleMatch[1].trim() : '';
+async function writeTags(startRow, updates) {
+  const values = updates.map(t => [t]);
+  const range = `${SHEET_NAME}!${OUTPUT_COLUMN}${startRow}`;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range,
+    valueInputOption: 'RAW',
+    requestBody: { values }
+  });
+}
 
-      updatesAY.push({ row: rowNum, values: [tags] });
-      updatesAZ.push({ row: rowNum, values: [rationale] });
-    }
+app.get('/generate-tags', async (req, res) => {
+  try {
+    const startRow = await getLastProcessedRow();
+    const data = await getSheetData(startRow, BATCH_SIZE);
+    if (data.length === 0) return res.send('✅ No more data to process.');
 
-    await batchUpdate(sheetName, updatesAY, ['AY']);
-    await batchUpdate(sheetName, updatesAZ, ['AZ']);
+    const firstIndexes = getFirstVariantIndexes(data);
+    const tagPromises = firstIndexes.map(i => {
+      const row = data[i];
+      return generateTags(row[1], row[2], row[4]);
+    });
 
-    res.send(`✅ Diet tags and rationale updated for ${updatesAY.length} rows in "${sheetName}".`);
+    const tagResults = await Promise.all(tagPromises);
+    const outputArray = data.map((row, i) => {
+      return firstIndexes.includes(i) ? tagResults.shift() : '';
+    });
+
+    await writeTags(startRow, outputArray);
+    await updateProgress(startRow + data.length);
+    res.send(`✅ Processed rows ${startRow} to ${startRow + data.length - 1}`);
   } catch (err) {
-    console.error('❌ Error in /generate-diet-tags:', err.message);
-    res.status(500).send('Failed to generate diet tags.');
+    console.error('❌ Error in tag generation:', err);
+    res.status(500).send('❌ Failed to generate tags');
   }
 });
 
-app.get('/generate-diet-tags-23', async (req, res) => {
-  const sheetName = 'Copy of Sheet23';
-
-  try {
-    const data = await getRows(sheetName, startRow, startRow + batchSize - 1, ['B', 'C', 'AO']);
-    const updatesAR = [];
-    const updatesAS = [];
-
-    for (let i = 0; i < data.length; i++) {
-      const rowNum = startRow + i;
-      const [title, description, ingredients] = data[i];
-      if (!title && !description && !ingredients) continue;
-
-      const prompt = `
-You are a dietary compliance assistant for a whole foods retailer. Based on the product title, description, and ingredients below, identify which of the following diets apply:
-
-${DIET_TAGS.join(', ')}
-
-Respond with two fields:
-1. **Tags**: A comma-separated list of applicable diets using the exact wording above (e.g. Vegan, Gluten Free). Do not hyphenate.
-2. **Rationale**: A brief justification, citing keywords, claims, or ingredient exclusions that support the tag selections.
-
-Product Title: ${title}
-Product Description: ${description}
-Ingredients: ${ingredients}
-`;
-
-      const response = await axios.post(
-        'https://api.openai.com/v1/chat/completions',
-        {
-          model: 'gpt-4o',
-          messages: [{ role: 'user', content: prompt }],
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      const content = response.data.choices[0].message.content;
-      const tagMatch = content.match(/\*\*Tags\*\*:\s*(.+)/i);
-      const rationaleMatch = content.match(/\*\*Rationale\*\*:\s*(.+)/i);
-
-      const tags = tagMatch ? tagMatch[1].trim() : '';
-      const rationale = rationaleMatch ? rationaleMatch[1].trim() : '';
-
-      updatesAR.push({ row: rowNum, values: [tags] });
-      updatesAS.push({ row: rowNum, values: [rationale] });
-    }
-
-    await batchUpdate(sheetName, updatesAR, ['AR']);
-    await batchUpdate(sheetName, updatesAS, ['AS']);
-
-    res.send(`✅ Diet tags and rationale updated for ${updatesAR.length} rows in "${sheetName}".`);
-  } catch (err) {
-    console.error('❌ Error in /generate-diet-tags-23:', err.message);
-    res.status(500).send('Failed to generate diet tags for Sheet23.');
-  }
-});
-
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🔗 Endpoints available:`);
-  console.log(`   /generate-diet-tags`);
-  console.log(`   /generate-diet-tags-23`);
+  console.log(`🚀 Tag generator live on port ${PORT}`);
 });
