@@ -19,7 +19,6 @@ const auth = new google.auth.JWT(
   ['https://www.googleapis.com/auth/spreadsheets']
 );
 const sheets = google.sheets({ version: 'v4', auth });
-
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 async function getLastProcessedRow() {
@@ -27,13 +26,21 @@ async function getLastProcessedRow() {
     spreadsheetId: SHEET_ID,
     range: `${SHEET_NAME}!${TRACKER_CELL}`
   });
-  const row = parseInt(res.data.values?.[0]?.[0] || '2', 10);
-  console.log('Start row from Z1:', row);
+
+  const raw = res.data.values?.[0]?.[0];
+  const row = parseInt(raw, 10);
+
+  if (!row || isNaN(row)) {
+    console.warn(`⚠️ Invalid or missing value in ${TRACKER_CELL}. Defaulting to 2.`);
+    return 2;
+  }
+
+  console.log(`▶️ Resuming from row: ${row}`);
   return row;
 }
 
 async function updateProgress(row) {
-  console.log('Updating progress tracker to row:', row);
+  console.log('📝 Updating tracker to row:', row);
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range: `${SHEET_NAME}!${TRACKER_CELL}`,
@@ -44,12 +51,12 @@ async function updateProgress(row) {
 
 async function getSheetData(startRow, numRows) {
   const range = `${SHEET_NAME}!A${startRow}:H${startRow + numRows}`;
-  console.log('Fetching range:', range);
+  console.log('📥 Fetching range:', range);
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range
   });
-  console.log('Rows fetched:', res.data.values?.length || 0);
+  console.log('📊 Rows fetched:', res.data.values?.length || 0);
   return res.data.values || [];
 }
 
@@ -86,10 +93,10 @@ Category: ${category}
     });
 
     const result = response.choices[0].message.content.trim();
-    console.log('Generated tags:', result);
+    console.log('🏷️ Generated tags:', result);
     return result;
   } catch (error) {
-    console.error('OpenAI error:', error.response?.data || error.message || error);
+    console.error('❌ OpenAI error:', error.response?.data || error.message || error);
     throw error;
   }
 }
@@ -97,7 +104,7 @@ Category: ${category}
 async function writeTags(startRow, updates) {
   const values = updates.map(tag => [tag]);
   const range = `${SHEET_NAME}!${OUTPUT_COLUMN}${startRow}`;
-  console.log('Writing tags to range:', range);
+  console.log('📤 Writing tags to range:', range);
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range,
@@ -106,36 +113,52 @@ async function writeTags(startRow, updates) {
   });
 }
 
+// 🔍 Debug-only endpoint
+app.get('/debug-sheet', async (req, res) => {
+  try {
+    const testRange = `${SHEET_NAME}!A2:H2`;
+    const result = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: testRange
+    });
+
+    console.log('✅ Sheet read succeeded:', result.data.values);
+    res.send(`✅ Able to read test range: ${testRange}`);
+  } catch (error) {
+    console.error('❌ Sheet read failed:', error.response?.data || error.message || error);
+    res.status(500).send('❌ Failed to read test range');
+  }
+});
+
+// 🚀 Main tag generation endpoint
 app.get('/generate-tags', async (req, res) => {
   try {
     const startRow = await getLastProcessedRow();
     const data = await getSheetData(startRow, BATCH_SIZE);
     if (data.length === 0) {
-      console.log('No more data to process.');
+      console.log('✅ No more data to process.');
       return res.send('✅ No more data to process.');
     }
 
     const firstIndexes = getFirstVariantIndexes(data);
-    console.log('Found first variants at indexes:', firstIndexes);
+    console.log('🧬 First variant indexes:', firstIndexes);
 
     const tagPromises = firstIndexes.map(i => {
       const row = data[i];
-      const title = row[1] || '';
-      const description = row[2] || '';
-      const category = row[4] || '';
-      return generateTags(title, description, category);
+      return generateTags(row[1] || '', row[2] || '', row[4] || '');
     });
 
     const tagResults = await Promise.all(tagPromises);
-    const outputArray = data.map((_, i) => (
+    const outputArray = data.map((_, i) =>
       firstIndexes.includes(i) ? tagResults.shift() : ''
-    ));
+    );
 
     await writeTags(startRow, outputArray);
     await updateProgress(startRow + data.length);
 
-    console.log(`✅ Successfully processed ${data.length} rows`);
-    res.send(`✅ Processed rows ${startRow} to ${startRow + data.length - 1}`);
+    const message = `✅ Processed rows ${startRow} to ${startRow + data.length - 1}`;
+    console.log(message);
+    res.send(message);
   } catch (err) {
     console.error('❌ Error in tag generation:', err.response?.data || err.message || err);
     res.status(500).send('❌ Failed to generate tags');
