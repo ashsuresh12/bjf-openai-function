@@ -1,7 +1,8 @@
-// index.js
+import express from 'express';
+import dotenv from 'dotenv';
+import { generateImagesForPrompt } from './services/imageGenerator.js';
 
-const express = require('express');
-const { generateImagesForPrompt } = require('./services/imageGenerator');
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -15,6 +16,7 @@ app.get('/generate-image-test', async (req, res) => {
     const imageUrl = await generateImagesForPrompt(prompt);
     res.status(200).json({ imageUrl });
   } catch (err) {
+    console.error('❌ Error generating image:', err);
     res.status(500).json({ error: err.message });
   }
 });

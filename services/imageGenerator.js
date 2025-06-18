@@ -1,38 +1,58 @@
-// services/imageGenerator.js
+import OpenAI from 'openai';
+import { google } from 'googleapis';
+import fs from 'fs/promises';
+import path from 'path';
+import dotenv from 'dotenv';
 
-const fetch = require('node-fetch');
+dotenv.config();
 
-async function generateImagesForPrompt(prompt) {
-  try {
-    const response = await fetch('https://api.openai.com/v1/images/generations', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'dall-e-3',
-        prompt: prompt,
-        n: 1,
-        size: '1024x1024',
-        response_format: 'url',
-      }),
-    });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    if (!response.ok) {
-      const error = await response.json();
-      console.error('❌ OpenAI API error:', error);
-      throw new Error(error.error?.message || 'Unknown error');
-    }
+const auth = new google.auth.GoogleAuth({
+  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
+  scopes: ['https://www.googleapis.com/auth/drive.file'],
+});
 
-    const data = await response.json();
-    return data.data[0].url;
-  } catch (err) {
-    console.error('❌ Image generation failed:', err.message);
-    throw err;
-  }
+const drive = google.drive({
+  version: 'v3',
+  auth,
+});
+
+export async function generateImagesForPrompt(prompt) {
+  const response = await openai.images.generate({
+    prompt,
+    n: 1,
+    size: '1024x1024',
+    response_format: 'b64_json',
+  });
+
+  const base64Data = response.data[0].b64_json;
+  const imageBuffer = Buffer.from(base64Data, 'base64');
+  const tmpFile = path.join('/tmp', `image-${Date.now()}.png`);
+  await fs.writeFile(tmpFile, imageBuffer);
+
+  const driveRes = await drive.files.create({
+    requestBody: {
+      name: path.basename(tmpFile),
+      mimeType: 'image/png',
+    },
+    media: {
+      mimeType: 'image/png',
+      body: await fs.readFile(tmpFile),
+    },
+    fields: 'id',
+  });
+
+  const fileId = driveRes.data.id;
+
+  await drive.permissions.create({
+    fileId,
+    requestBody: {
+      role: 'reader',
+      type: 'anyone',
+    },
+  });
+
+  const fileUrl = `https://drive.google.com/uc?id=${fileId}`;
+  return fileUrl;
 }
-
-module.exports = {
-  generateImagesForPrompt,
-};
