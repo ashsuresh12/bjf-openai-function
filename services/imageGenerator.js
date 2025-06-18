@@ -21,7 +21,7 @@ export async function generateSingleImage(prompt) {
   const buffer = Buffer.from(imageBase64, "base64");
 
   const filename = `image-${Date.now()}.png`;
-  const uploadUrl = await uploadImageToDrive(buffer, filename);
+  const uploadUrl = await uploadToDrive(buffer, filename);
 
   return uploadUrl;
 }
