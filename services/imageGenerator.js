@@ -25,7 +25,7 @@ export async function generateImagesForPrompt(prompt) {
     });
 
     const imageUrl = response.data[0].url;
-    const uploadedFile = await uploadImageToDrive(imageUrl, prompt, hex);
+    const uploadedFile = await uploadToDrive(imageUrl, prompt, hex);
 
     images.push({ hex, imageUrl, uploadedFile });
   }
