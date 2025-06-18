@@ -1,45 +1,47 @@
-import { google } from "googleapis";
-import axios from "axios";
+import { google } from 'googleapis';
+import { Readable } from 'stream';
 
-const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+export async function uploadImageToDrive(imageBuffer, fileName, folderId) {
+  try {
+    const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
 
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/drive"]
-});
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/drive.file']
+    });
 
-export async function uploadImageToDrive(imageUrl, prompt, hex) {
-  const drive = google.drive({ version: "v3", auth });
+    const drive = google.drive({ version: 'v3', auth });
 
-  const imageBuffer = await axios.get(imageUrl, { responseType: "arraybuffer" }).then(res => res.data);
+    const fileMetadata = {
+      name: fileName,
+      parents: [folderId]
+    };
 
-  const fileName = `${prompt.slice(0, 30).replace(/\s+/g, "_")}_${hex.replace("#", "")}.png`;
+    const media = {
+      mimeType: 'image/png',
+      body: Readable.from(imageBuffer)
+    };
 
-  const fileMetadata = {
-    name: fileName,
-    parents: [/* Optional: Add folder ID if needed */]
-  };
+    const response = await drive.files.create({
+      requestBody: fileMetadata,
+      media,
+      fields: 'id'
+    });
 
-  const media = {
-    mimeType: "image/png",
-    body: Buffer.from(imageBuffer)
-  };
+    const fileId = response.data.id;
 
-  const uploadedFile = await drive.files.create({
-    requestBody: fileMetadata,
-    media: media,
-    fields: "id"
-  });
+    await drive.permissions.create({
+      fileId,
+      requestBody: {
+        role: 'reader',
+        type: 'anyone'
+      }
+    });
 
-  await drive.permissions.create({
-    fileId: uploadedFile.data.id,
-    requestBody: { role: "reader", type: "anyone" }
-  });
-
-  const file = await drive.files.get({
-    fileId: uploadedFile.data.id,
-    fields: "webViewLink"
-  });
-
-  return file.data;
+    const fileUrl = `https://drive.google.com/uc?id=${fileId}`;
+    return fileUrl;
+  } catch (error) {
+    console.error('❌ Error uploading to Drive:', error);
+    throw error;
+  }
 }

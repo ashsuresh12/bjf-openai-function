@@ -1,58 +1,34 @@
+// services/imageGenerator.js
+
 import OpenAI from 'openai';
-import { google } from 'googleapis';
-import fs from 'fs/promises';
-import path from 'path';
-import dotenv from 'dotenv';
+import { uploadImageToDrive } from './uploadToDrive.js';
 
-dotenv.config();
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
-  scopes: ['https://www.googleapis.com/auth/drive.file'],
-});
-
-const drive = google.drive({
-  version: 'v3',
-  auth,
-});
+const openai = new OpenAI();
 
 export async function generateImagesForPrompt(prompt) {
-  const response = await openai.images.generate({
-    prompt,
-    n: 1,
-    size: '1024x1024',
-    response_format: 'b64_json',
-  });
+  const backgroundColors = [
+    '#F3C7AA', // Apricot
+    '#ED997D', // Atomic Tangerine
+    '#F5A877', // Sandy Brown
+    '#F8F4EC', // Almond Cream
+    '#D7B98E'  // Golden Almond
+  ];
 
-  const base64Data = response.data[0].b64_json;
-  const imageBuffer = Buffer.from(base64Data, 'base64');
-  const tmpFile = path.join('/tmp', `image-${Date.now()}.png`);
-  await fs.writeFile(tmpFile, imageBuffer);
+  const images = [];
 
-  const driveRes = await drive.files.create({
-    requestBody: {
-      name: path.basename(tmpFile),
-      mimeType: 'image/png',
-    },
-    media: {
-      mimeType: 'image/png',
-      body: await fs.readFile(tmpFile),
-    },
-    fields: 'id',
-  });
+  for (const hex of backgroundColors) {
+    const response = await openai.images.generate({
+      prompt: `${prompt}, background in ${hex}, soft natural light, realistic home setting`,
+      n: 1,
+      size: '1024x1024',
+      response_format: 'url'
+    });
 
-  const fileId = driveRes.data.id;
+    const imageUrl = response.data[0].url;
+    const uploadedFile = await uploadImageToDrive(imageUrl, prompt, hex);
 
-  await drive.permissions.create({
-    fileId,
-    requestBody: {
-      role: 'reader',
-      type: 'anyone',
-    },
-  });
+    images.push({ hex, imageUrl, uploadedFile });
+  }
 
-  const fileUrl = `https://drive.google.com/uc?id=${fileId}`;
-  return fileUrl;
+  return images;
 }

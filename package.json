@@ -1,16 +1,16 @@
 {
   "name": "bjf-image-generator",
   "version": "1.0.0",
-  "type": "module",
+  "description": "Generate lifestyle images using OpenAI and upload to Google Drive",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "fs": "^0.0.1-security",
-    "googleapis": "^105.0.0",
-    "openai": "^4.40.0"
+    "googleapis": "^127.0.0",
+    "multer": "^1.4.5-lts.1",
+    "openai": "^4.33.0"
   }
 }
