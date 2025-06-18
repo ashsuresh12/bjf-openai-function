@@ -1,34 +1,27 @@
-// services/imageGenerator.js
-
-import OpenAI from 'openai';
-import { uploadToDrive } from './uploadToDrive.js';
+import OpenAI from "openai";
+import { uploadImageToDrive } from "./uploadToDrive.js";
+import sharp from "sharp";
 
 const openai = new OpenAI();
 
-export async function generateImagesForPrompt(prompt) {
-  const backgroundColors = [
-    '#F3C7AA', // Apricot
-    '#ED997D', // Atomic Tangerine
-    '#F5A877', // Sandy Brown
-    '#F8F4EC', // Almond Cream
-    '#D7B98E'  // Golden Almond
-  ];
+export async function generateSingleImage(prompt) {
+  const backgroundHex = "#F3C7AA"; // test colour
 
-  const images = [];
+  const fullPrompt = `${prompt}, soft natural light, peach background (${backgroundHex}), no label`;
 
-  for (const hex of backgroundColors) {
-    const response = await openai.images.generate({
-      prompt: `${prompt}, background in ${hex}, soft natural light, realistic home setting`,
-      n: 1,
-      size: '1024x1024',
-      response_format: 'url'
-    });
+  const imageResponse = await openai.images.generate({
+    model: "dall-e-3",
+    prompt: fullPrompt,
+    n: 1,
+    size: "1024x1024",
+    response_format: "b64_json",
+  });
 
-    const imageUrl = response.data[0].url;
-    const uploadedFile = await uploadToDrive(imageUrl, prompt, hex);
+  const imageBase64 = imageResponse.data[0].b64_json;
+  const buffer = Buffer.from(imageBase64, "base64");
 
-    images.push({ hex, imageUrl, uploadedFile });
-  }
+  const filename = `image-${Date.now()}.png`;
+  const uploadUrl = await uploadImageToDrive(buffer, filename);
 
-  return images;
+  return uploadUrl;
 }
