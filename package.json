@@ -1,16 +1,19 @@
 {
   "name": "bjf-image-generator",
   "version": "1.0.0",
+  "description": "Image generation and upload service for Just So Good (Render-based)",
   "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "formidable": "^3.5.3",
-    "openai": "^4.26.0",
-    "googleapis": "^133.0.0"
+    "axios": "^1.6.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "form-data": "^4.0.0",
+    "googleapis": "^133.0.0",
+    "openai": "^4.27.0",
+    "sharp": "^0.33.3"
   }
 }
