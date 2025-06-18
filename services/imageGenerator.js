@@ -1,34 +1,39 @@
-import { OpenAI } from "openai";
-import { uploadImageToDrive } from "./driveUploader.js";
+const fetch = require('node-fetch');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-const BACKGROUNDS = [
-  "#F3C7AA", // Apricot
-  "#ED997D", // Atomic Tangerine
-  "#F5A877", // Sandy Brown
-  "#F8F4EC", // Almond Cream
-  "#D7B98E"  // Golden Almond
-];
-
-export async function generateImagesForPrompt(basePrompt) {
-  const results = [];
-
-  for (const hex of BACKGROUNDS) {
-    const fullPrompt = `${basePrompt}, soft natural light, non-timber benchtop, on a ${hex} background`;
-    console.log(`🎨 Generating: ${fullPrompt}`);
-
-    const response = await openai.images.generate({
-      model: "dall-e-3",
-      prompt: fullPrompt,
-      n: 1,
-      size: "1024x1024"
+/**
+ * Generates an image using the OpenAI API based on the given prompt.
+ * @param {string} prompt - The text prompt to generate the image from.
+ * @returns {Promise<string>} - The URL of the generated image.
+ */
+async function generateImage(prompt) {
+  try {
+    const response = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'dall-e-3',
+        prompt: prompt,
+        n: 1,
+        size: '1024x1024',
+        response_format: 'url',
+      }),
     });
 
-    const imageUrl = response.data[0].url;
-    const uploaded = await uploadImageToDrive(imageUrl, basePrompt, hex);
-    results.push({ hex, url: uploaded.webViewLink });
-  }
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('❌ OpenAI API error:', errorData);
+      throw new Error(errorData.error?.message || 'Unknown error from OpenAI API');
+    }
 
-  return results;
+    const data = await response.json();
+    return data.data[0].url;
+  } catch (error) {
+    console.error('❌ Failed to generate image:', error.message);
+    throw error;
+  }
 }
+
+module.exports = generateImage;
