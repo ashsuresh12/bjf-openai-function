@@ -1,11 +1,8 @@
+// services/imageGenerator.js
+
 const fetch = require('node-fetch');
 
-/**
- * Generates an image using the OpenAI API based on the given prompt.
- * @param {string} prompt - The text prompt to generate the image from.
- * @returns {Promise<string>} - The URL of the generated image.
- */
-async function generateImage(prompt) {
+async function generateImagesForPrompt(prompt) {
   try {
     const response = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
@@ -23,17 +20,19 @@ async function generateImage(prompt) {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error('❌ OpenAI API error:', errorData);
-      throw new Error(errorData.error?.message || 'Unknown error from OpenAI API');
+      const error = await response.json();
+      console.error('❌ OpenAI API error:', error);
+      throw new Error(error.error?.message || 'Unknown error');
     }
 
     const data = await response.json();
     return data.data[0].url;
-  } catch (error) {
-    console.error('❌ Failed to generate image:', error.message);
-    throw error;
+  } catch (err) {
+    console.error('❌ Image generation failed:', err.message);
+    throw err;
   }
 }
 
-module.exports = generateImage;
+module.exports = {
+  generateImagesForPrompt,
+};
