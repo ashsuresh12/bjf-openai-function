@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { uploadImageToDrive } from "./uploadToDrive.js";
+import { uploadToDrive } from "./uploadToDrive.js";
 import sharp from "sharp";
 
 const openai = new OpenAI();
