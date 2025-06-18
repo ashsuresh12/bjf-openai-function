@@ -1,7 +1,7 @@
 // services/imageGenerator.js
 
 import OpenAI from 'openai';
-import { uploadImageToDrive } from './uploadToDrive.js';
+import { uploadToDrive } from './uploadToDrive.js';
 
 const openai = new OpenAI();
 
